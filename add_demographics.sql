@@ -1,0 +1,19 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
+IF NOT EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'Nu' AND Object_ID = Object_ID(N'HocSinh'))
+BEGIN
+    ALTER TABLE HocSinh ADD Nu BIT NOT NULL DEFAULT 0;
+END
+
+IF NOT EXISTS(SELECT 1 FROM sys.columns WHERE Name = N'DanTocKhac' AND Object_ID = Object_ID(N'HocSinh'))
+BEGIN
+    ALTER TABLE HocSinh ADD DanTocKhac BIT NOT NULL DEFAULT 0;
+END
+GO
+
+-- Randomize mock data for testing
+UPDATE HocSinh SET Nu = 1 WHERE ABS(CHECKSUM(NEWID())) % 2 = 0;
+UPDATE HocSinh SET DanTocKhac = 1 WHERE ABS(CHECKSUM(NEWID())) % 5 = 0;
+GO

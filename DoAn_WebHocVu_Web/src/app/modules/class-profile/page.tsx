@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Tag, Button, Modal, Form, Input, DatePicker, message, Row, Col, Tabs, Space, Alert, Typography, Spin, Popconfirm, Badge, Radio } from 'antd';
+import { Card, Table, Tag, Button, Modal, Form, Input, DatePicker, message, Row, Col, Tabs, Space, Alert, Typography, Spin, Popconfirm, Badge, Radio, Select, Checkbox } from 'antd';
 import { UserOutlined, PlusOutlined, CalendarOutlined, CheckCircleOutlined, LockOutlined, DeleteOutlined, KeyOutlined, TeamOutlined, DesktopOutlined, BookOutlined, SearchOutlined } from '@ant-design/icons';
 import apiClient from '../../../services/apiClient';
 import dayjs from 'dayjs';
@@ -16,6 +16,8 @@ interface Student {
   maLop: string;
   taiKhoanPhuHuynh?: string;
   sdtPhuHuynh?: string;
+  nu?: boolean;
+  danTocKhac?: boolean;
   uuTienZalo?: boolean;
   trangThai: string; // "Đang học" hoặc "Đã chuyển trường"
 }
@@ -31,16 +33,18 @@ interface LopHoc {
   maLop: string;
   tenLop: string;
   gvchuNhiem?: string;
+  nienKhoa?: string;
 }
 
 interface Schedule {
-  maPhanCong?: string;
+  maPhanCong?: number;
   maGiaoVien: string;
   maLop: string;
   maMon: string;
   thu: string;
   buoi: string;
   tiet: string;
+  nienKhoa?: string;
 }
 
 export default function ClassProfilePage() {
@@ -55,8 +59,15 @@ export default function ClassProfilePage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
 
   // Search/Filter states
-  const [selectedClass, setSelectedClass] = useState<string>('L1A');
+  const [nienKhoaList, setNienKhoaList] = useState<string[]>([]);
+  const [selectedNienKhoa, setSelectedNienKhoa] = useState<string>('');
+  const [selectedClass, setSelectedClass] = useState<string>('');
   const [lookupTeacherId, setLookupTeacherId] = useState<string>('');
+
+  // Lấy năm học mới nhất (đứng đầu danh sách) làm năm học hiện tại
+  const [activeAcademicYear, setActiveAcademicYear] = useState<string>('');
+  const isLocked = selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '';
+  const [showAllStudents, setShowAllStudents] = useState<boolean>(true);
 
   // Modals visibility
   const [isClassModalOpen, setIsClassModalOpen] = useState(false);
@@ -66,6 +77,16 @@ export default function ClassProfilePage() {
   const [isStudentModalOpen, setIsStudentModalOpen] = useState(false);
   const [isParentAccModalOpen, setIsParentAccModalOpen] = useState(false);
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+
+  const handleChotNienKhoa = async (nienKhoaToLock: string) => {
+    try {
+      const res = await apiClient.post('/QuanLyTruong/chot-nien-khoa', { maNienKhoa: nienKhoaToLock });
+      message.success(res.data.message || `Đã chốt năm học ${nienKhoaToLock} làm năm hiện hành!`);
+      setActiveAcademicYear(nienKhoaToLock);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Có lỗi xảy ra khi chốt niên khóa!');
+    }
+  };
 
   // Form hooks
   const [classForm] = Form.useForm();
@@ -77,6 +98,7 @@ export default function ClassProfilePage() {
 
   // Student modal edit mode
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+  const [monHocs, setMonHocs] = useState<any[]>([]);
 
   // Điểm danh state (Local mapping: maHs -> trạng thái vắng)
   const [attendanceList, setAttendanceList] = useState<{ maHs: string; trangThai: string }[]>([]);
@@ -134,16 +156,40 @@ export default function ClassProfilePage() {
         'GiaoVien';
       const username = decoded?.sub || decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] || '';
 
+      // Tải niên khóa hiện tại
+      try {
+        const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
+        if (resNK.data?.activeAcademicYear) {
+          setActiveAcademicYear(resNK.data.activeAcademicYear);
+        }
+      } catch (e) {
+        console.warn("Could not fetch active academic year", e);
+      }
+
       // Tải danh sách lớp trước tiên
       const resLop = await apiClient.get('/LopHoc/danh-sach');
       if (resLop.data && Array.isArray(resLop.data)) {
         setLopHocs(resLop.data);
         if (resLop.data.length > 0) {
+          // Trích xuất danh sách Niên Khóa duy nhất (Sắp xếp giảm dần để hiển thị năm mới nhất)
+          const uniqueNK = Array.from(new Set(resLop.data.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
+          setNienKhoaList(uniqueNK as string[]);
+
           // Đối với Giáo viên, tự động chọn lớp họ chủ nhiệm (nếu có)
           const gvcnClass = resLop.data.find(l => l.gvchuNhiem === username);
-          const defaultClass = gvcnClass ? gvcnClass.maLop : resLop.data[0].maLop;
-          setSelectedClass(defaultClass);
-          fetchStudentsForClass(defaultClass);
+          if (gvcnClass) {
+            setSelectedNienKhoa(gvcnClass.nienKhoa);
+            setSelectedClass(gvcnClass.maLop);
+            fetchStudentsForClass(gvcnClass.maLop);
+          } else if (uniqueNK.length > 0) {
+            const firstNK = uniqueNK[0] as string;
+            setSelectedNienKhoa(firstNK);
+            const firstClassOfNK = resLop.data.find((x: any) => x.nienKhoa === firstNK);
+            if (firstClassOfNK) {
+              setSelectedClass(firstClassOfNK.maLop);
+              fetchStudentsForClass(firstClassOfNK.maLop);
+            }
+          }
         }
       }
 
@@ -152,6 +198,10 @@ export default function ClassProfilePage() {
       if (resGv.data && Array.isArray(resGv.data)) {
         setTeachers(resGv.data);
       }
+
+      // Tải danh sách môn học
+      const resMon = await apiClient.get('/QuanLyTruong/danh-sach-mon-hoc');
+      if (resMon.data) setMonHocs(resMon.data);
 
       // Tải lịch dạy của bản thân
       if (username) {
@@ -168,8 +218,12 @@ export default function ClassProfilePage() {
     if (!classCode) return;
     setLoading(true);
     try {
-      // Đọc hồ sơ học sinh - API này trả về toàn bộ học sinh (bao gồm cả học sinh đã chuyển trường)
-      const res = await apiClient.get(`/HocSinh/truy-xuat-ho-so/${classCode}`);
+      // Đọc hồ sơ học sinh - API này trả về toàn bộ học sinh (bao gồm cả học sinh đã chuyển trường) nếu đang xem năm cũ
+      const isArchivedYear = selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '';
+      const forceFetchAll = showAllStudents || isArchivedYear;
+      const endpoint = forceFetchAll ? `/HocSinh/truy-xuat-ho-so/${classCode}` : `/LopHoc/${classCode}/danh-sach-hien-tai`;
+      
+      const res = await apiClient.get(endpoint);
       if (res.data && Array.isArray(res.data)) {
         setStudents(res.data);
       }
@@ -261,7 +315,8 @@ export default function ClassProfilePage() {
         maMon: values.maMon,
         thu: values.thu,
         buoi: values.buoi,
-        tiet: values.tiet
+        tiet: values.tiet?.toString() || '',
+        nienKhoa: activeAcademicYear
       };
       const res = await apiClient.post('/QuanLyTruong/phan-cong-bo-mon', payload);
       message.success(res.data.message || 'Phân công bộ môn giảng dạy thành công!');
@@ -271,8 +326,27 @@ export default function ClassProfilePage() {
     } catch (err: any) {
       Modal.error({
         title: '⚠️ Lỗi Trùng Lịch / Chặn Nghiệp Vụ',
-        content: err.response?.data?.message || 'Trùng lịch dạy hoặc môn học đã được giáo viên khác đảm nhiệm!',
+        content: err.response?.data?.message || (err.response?.data?.errors ? JSON.stringify(err.response.data.errors) : (err.message || 'Lỗi hệ thống không xác định từ Server!'))
       });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3.1. Hủy Phân Công Giảng Dạy Bộ Môn (Hiệu trưởng)
+  const handleDeleteSchedule = async (maPhanCong?: number) => {
+    if (maPhanCong === undefined) return;
+    setLoading(true);
+    try {
+      const res = await apiClient.delete(`/QuanLyTruong/xoa-phan-cong/${maPhanCong}`);
+      message.success(res.data?.message || 'Đã hủy phân phân công dạy thành công!');
+      if (lookupTeacherId) {
+        fetchScheduleForTeacher(lookupTeacherId);
+      } else if (currentUser) {
+        fetchScheduleForTeacher(currentUser);
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Lỗi khi xóa phân công giảng dạy!');
     } finally {
       setLoading(false);
     }
@@ -341,8 +415,10 @@ export default function ClassProfilePage() {
         maLop: selectedClass,
         sdtPhuHuynh: values.sdtPhuHuynh,
         uuTienZalo: values.uuTienZalo,
+        nu: values.nu || false,
+        danTocKhac: values.danTocKhac || false,
         trangThai: values.trangThai || 'Đang học',
-        taiKhoanPhuHuynh: values.taiKhoanPhuHuynh || null
+        taiKhoanPhuHuynh: values.taiKhoanPhuHuynh?.trim() || null
       };
 
       if (editingStudent) {
@@ -360,7 +436,9 @@ export default function ClassProfilePage() {
       setEditingStudent(null);
       fetchStudentsForClass(selectedClass);
     } catch (err: any) {
-      message.error(err.response?.data?.message || 'Có lỗi xảy ra khi lưu học sinh! Vui lòng kiểm tra mã phụ huynh.');
+      // API Backend có thể ném 400 Validation Error (data.title) hoặc 500
+      const errMsg = err.response?.data?.message || err.response?.data?.title || 'Có lỗi xảy ra khi lưu! Vui lòng kiểm tra lại thông tin nhập (có thể do trùng mã HS).';
+      message.error(errMsg);
     } finally {
       setLoading(false);
     }
@@ -480,6 +558,8 @@ export default function ClassProfilePage() {
   const studentColumns = [
     { title: 'Mã HS', dataIndex: 'maHs', key: 'maHs', render: (text: string) => <b>{text}</b> },
     { title: 'Họ và Tên', dataIndex: 'hoTen', key: 'hoTen', className: 'font-semibold text-slate-800' },
+    { title: 'Nữ', dataIndex: 'nu', key: 'nu', className: 'text-center', render: (val: boolean) => val ? <span className="font-bold text-pink-600">x</span> : '' },
+    { title: 'Dân tộc khác', dataIndex: 'danTocKhac', key: 'danTocKhac', className: 'text-center', render: (val: boolean) => val ? <span className="font-bold text-emerald-600">x</span> : '' },
     {
       title: 'Ngày Sinh',
       dataIndex: 'ngaySinh',
@@ -507,15 +587,15 @@ export default function ClassProfilePage() {
           <Space orientation="vertical" size={2}>
             <span>Tài khoản: <Badge status="success" text={record.taiKhoanPhuHuynh} /></span>
             <Space>
-              <Button size="small" disabled={record.trangThai === 'Đã chuyển trường'} type="link" danger icon={<DeleteOutlined />} onClick={() => handleDeleteParentAccount(record.taiKhoanPhuHuynh!)}>Xóa</Button>
-              <Button size="small" disabled={record.trangThai === 'Đã chuyển trường'} type="link" icon={<KeyOutlined />} onClick={() => handleResetParentPassword(record.maHs)}>Reset</Button>
+              <Button size="small" disabled={record.trangThai === 'Đã chuyển trường' || isLocked} type="link" danger icon={<DeleteOutlined />} onClick={() => handleDeleteParentAccount(record.taiKhoanPhuHuynh!)}>Xóa</Button>
+              <Button size="small" disabled={record.trangThai === 'Đã chuyển trường' || isLocked} type="link" icon={<KeyOutlined />} onClick={() => handleResetParentPassword(record.maHs)}>Reset</Button>
             </Space>
           </Space>
         ) : (
           <Button
             size="small"
             type="dashed"
-            disabled={record.trangThai === 'Đã chuyển trường'}
+            disabled={record.trangThai === 'Đã chuyển trường' || isLocked}
             icon={<PlusOutlined />}
             onClick={() => {
               parentAccForm.setFieldsValue({ maHs: record.maHs, tenDangNhap: `PH_${record.maHs.trim()}`, hoTen: `Phụ huynh em ${record.hoTen}` });
@@ -536,6 +616,7 @@ export default function ClassProfilePage() {
           <Space>
             <Button
               size="small"
+              disabled={isLocked}
               onClick={() => {
                 setEditingStudent(record);
                 studentForm.setFieldsValue({
@@ -543,6 +624,8 @@ export default function ClassProfilePage() {
                   hoTen: record.hoTen,
                   ngaySinh: record.ngaySinh ? dayjs(record.ngaySinh) : null,
                   sdtPhuHuynh: record.sdtPhuHuynh,
+                  nu: record.nu,
+                  danTocKhac: record.danTocKhac,
                   uuTienZalo: record.uuTienZalo,
                   trangThai: record.trangThai,
                   taiKhoanPhuHuynh: record.taiKhoanPhuHuynh
@@ -560,7 +643,7 @@ export default function ClassProfilePage() {
                 okText="Đồng ý"
                 cancelText="Hủy"
               >
-                <Button size="small" danger>Thôi học</Button>
+                <Button size="small" danger disabled={isLocked}>Thôi học</Button>
               </Popconfirm>
             )}
           </Space>
@@ -605,6 +688,31 @@ export default function ClassProfilePage() {
     { title: 'Lớp', dataIndex: 'maLop', key: 'maLop', render: (text: string) => <Tag color="purple">{text}</Tag> },
     { title: 'Giáo Viên dạy', dataIndex: 'maGiaoVien', key: 'maGiaoVien', className: 'text-blue-600 font-semibold' },
     { title: 'Mã Môn', dataIndex: 'maMon', key: 'maMon', render: (text: string) => <Tag color="cyan">{text}</Tag> },
+    ...(role === 'HieuTruong' ? [{
+      title: 'Hành động',
+      key: 'actions',
+      render: (_: any, record: Schedule) => (
+        <Popconfirm
+          title="Xác nhận hủy phân công môn học này?"
+          description="Lịch dạy của giáo viên sẽ bị xóa hoàn toàn khỏi lớp này."
+          onConfirm={() => handleDeleteSchedule(record.maPhanCong)}
+          okText="Đồng ý"
+          cancelText="Hủy"
+          okButtonProps={{ danger: true }}
+          disabled={isLocked || record.maPhanCong === -1}
+        >
+          <Button
+            size="small"
+            danger
+            type="link"
+            icon={<DeleteOutlined />}
+            disabled={isLocked || record.maPhanCong === -1}
+          >
+            Hủy phân công
+          </Button>
+        </Popconfirm>
+      )
+    }] : [])
   ];
 
   return (
@@ -638,9 +746,32 @@ export default function ClassProfilePage() {
                 <Row gutter={[16, 16]} className="mb-4" align="middle" justify="space-between">
                   <Col>
                     <Space>
-                      <Text className="font-semibold">Chọn Lớp học để xem:</Text>
-                      <div className="flex gap-2">
-                        {lopHocs.map(classItem => (
+                      <Text className="font-semibold text-slate-800">Năm Học:</Text>
+                      <Select 
+                        value={selectedNienKhoa || undefined} 
+                        onChange={(val) => {
+                          setSelectedNienKhoa(val);
+                          const classesInYear = lopHocs.filter((c: any) => c.nienKhoa === val);
+                          if (classesInYear.length > 0) {
+                             setSelectedClass(classesInYear[0].maLop);
+                             fetchStudentsForClass(classesInYear[0].maLop);
+                          } else {
+                             setSelectedClass('');
+                             setStudents([]);
+                          }
+                        }} 
+                        options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+                        className="font-bold min-w-[140px]"
+                      />
+                      {role === 'HieuTruong' && selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '' && (
+                        <Popconfirm title={`Chốt niên khóa ${selectedNienKhoa} làm năm hiện hành (Mở khóa sửa đổi)?`} onConfirm={() => handleChotNienKhoa(selectedNienKhoa)}>
+                          <Button type="primary" danger icon={<LockOutlined />}>Chốt Năm Này</Button>
+                        </Popconfirm>
+                      )}
+
+                      <Text className="font-semibold ml-4">Chọn Lớp ({selectedNienKhoa}):</Text>
+                      <div className="flex gap-2 border-l-2 border-indigo-100 pl-4">
+                        {lopHocs.filter((c: any) => c.nienKhoa === selectedNienKhoa).map((classItem: any) => (
                           <Button
                             key={classItem.maLop}
                             type={selectedClass === classItem.maLop ? 'primary' : 'default'}
@@ -662,6 +793,7 @@ export default function ClassProfilePage() {
                       <Button
                         type="primary"
                         icon={<PlusOutlined />}
+                        disabled={isLocked}
                         onClick={() => {
                           setEditingStudent(null);
                           studentForm.resetFields();
@@ -674,6 +806,7 @@ export default function ClassProfilePage() {
                         type="default"
                         icon={<CheckCircleOutlined />}
                         className="bg-emerald-50 text-emerald-600 border-emerald-200"
+                        disabled={isLocked}
                         onClick={handleOpenAttendance}
                       >
                         Mở Điểm Danh Lớp
@@ -681,6 +814,27 @@ export default function ClassProfilePage() {
                     </Space>
                   </Col>
                 </Row>
+
+                {isLocked && (
+                  <Alert message="🛡️ Dữ liệu năm học cũ đã khóa sổ (Archived). Tính năng chỉnh sửa, thêm mới và điểm danh đều bị vô hiệu hóa." type="error" showIcon className="mb-4 rounded-xl" />
+                )}
+
+                <div className="mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl flex justify-around items-center">
+                  <div className="text-center">
+                    <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Tổng Sĩ Số Sắp Lớp</div>
+                    <div className="text-3xl font-bold text-indigo-700">{students.filter(s => s.trangThai === 'Đang học').length} <span className="text-lg font-normal text-indigo-400">em</span></div>
+                  </div>
+                  <div className="w-px h-12 bg-indigo-200"></div>
+                  <div className="text-center">
+                    <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Số Học Sinh Nữ</div>
+                    <div className="text-3xl font-bold text-pink-600">{students.filter(s => s.nu && s.trangThai === 'Đang học').length} <span className="text-lg font-normal text-pink-300">em</span></div>
+                  </div>
+                  <div className="w-px h-12 bg-indigo-200"></div>
+                  <div className="text-center">
+                    <div className="text-sm font-semibold text-slate-500 uppercase tracking-wide">Dân Tộc Khác</div>
+                    <div className="text-3xl font-bold text-emerald-600">{students.filter(s => s.danTocKhac && s.trangThai === 'Đang học').length} <span className="text-lg font-normal text-emerald-300">em</span></div>
+                  </div>
+                </div>
 
                 <Spin spinning={loading} description="Đang tải danh sách học sinh...">
                   <Table
@@ -757,7 +911,7 @@ export default function ClassProfilePage() {
                   <Table
                     dataSource={schedules}
                     columns={scheduleColumns}
-                    rowKey={(record) => record.maPhanCong || Math.random().toString()}
+                    rowKey={(record) => record.maPhanCong?.toString() || Math.random().toString()}
                     pagination={false}
                     size="middle"
                     className="border border-slate-100 rounded-lg overflow-hidden"
@@ -823,32 +977,45 @@ export default function ClassProfilePage() {
           className="mb-4"
         />
         <Form form={subjectForm} layout="vertical" onFinish={handleAssignSubject}>
-          <Form.Item name="maGiaoVien" label="Nhập Mã Giáo Viên (Tài khoản GV)" rules={[{ required: true, message: 'Nhập mã giáo viên!' }]}>
-            <Input placeholder="ví dụ: GVCN1A, gv-theduc, gv-tin" />
+          <Form.Item name="maGiaoVien" label="Mã Giáo Viên (Tài khoản GV)" rules={[{ required: true, message: 'Nhập mã giáo viên!' }]}>
+            <Select placeholder="Mở danh sách để chọn Giáo viên..." showSearch optionFilterProp="children">
+              {teachers.map(t => <Select.Option key={t.tenDangNhap} value={t.tenDangNhap}>{t.hoTen} ({t.tenDangNhap})</Select.Option>)}
+            </Select>
           </Form.Item>
 
-          <Form.Item name="maLop" label="Nhập Mã Lớp Học" rules={[{ required: true, message: 'Nhập mã lớp!' }]}>
-            <Input placeholder="ví dụ: L1A, L2B" />
+          <Form.Item name="maLop" label="Lớp Học Phân Công" rules={[{ required: true, message: 'Nhập mã lớp!' }]}>
+            <Select placeholder="Chọn lớp thuộc năm học hiện tại...">
+              {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop} ({c.maLop})</Select.Option>)}
+            </Select>
           </Form.Item>
 
-          <Form.Item name="maMon" label="Nhập Mã Môn Học" rules={[{ required: true, message: 'Nhập mã môn!' }]}>
-            <Input placeholder="ví dụ: TOAN, TV, LSDL, TIN, GDTC, DD" />
+          <Form.Item name="maMon" label="Môn Học Phân Công" rules={[{ required: true, message: 'Nhập mã môn!' }]}>
+            <Select placeholder="Mở danh sách để chọn Môn học...">
+              {monHocs.map(m => <Select.Option key={m.maMon} value={m.maMon}>{m.tenMon} ({m.maMon})</Select.Option>)}
+            </Select>
           </Form.Item>
 
-          <Row gutter={16}>
+          <Row gutter={8}>
             <Col span={8}>
               <Form.Item name="thu" label="Thứ" rules={[{ required: true }]}>
-                <Input placeholder="ví dụ: Thứ 2, Thứ 3" />
+                <Select>
+                  {['Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'].map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+                </Select>
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="buoi" label="Buổi" rules={[{ required: true }]}>
-                <Input placeholder="Sáng / Chiều" />
+                <Select>
+                  <Select.Option value="Sáng">Sáng</Select.Option>
+                  <Select.Option value="Chiều">Chiều</Select.Option>
+                </Select>
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="tiet" label="Tiết học" rules={[{ required: true }]}>
-                <Input placeholder="Tiết 1, Tiết 2, Tiết 3" />
+              <Form.Item name="tiet" label="Tiết Số" rules={[{ required: true }]}>
+                <Select>
+                  {['1', '2', '3', '4', '5'].map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+                </Select>
               </Form.Item>
             </Col>
           </Row>
@@ -871,12 +1038,16 @@ export default function ClassProfilePage() {
         destroyOnHidden
       >
         <Form form={homeroomForm} layout="vertical" onFinish={handleAssignHomeroom}>
-          <Form.Item name="maLop" label="Nhập Mã Lớp Học" rules={[{ required: true, message: 'Nhập mã lớp học!' }]}>
-            <Input placeholder="ví dụ: L1A, L2B" />
+          <Form.Item name="maLop" label="Lớp Học" rules={[{ required: true, message: 'Nhập mã lớp học!' }]}>
+            <Select placeholder="Chọn lớp thuộc năm học hiện tại...">
+              {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop} ({c.maLop})</Select.Option>)}
+            </Select>
           </Form.Item>
 
-          <Form.Item name="maGVCN" label="Nhập Mã GVCN (Tên Đăng Nhập)" rules={[{ required: false }]}>
-            <Input placeholder="ví dụ: GVCN1A, GVCN2B (để trống để gỡ GVCN lớp này)" />
+          <Form.Item name="maGVCN" label="Chọn Mã GVCN mới" rules={[{ required: false }]}>
+            <Select placeholder="Chọn giáo viên hoặc để trống để gỡ" allowClear>
+              {teachers.map(t => <Select.Option key={t.tenDangNhap} value={t.tenDangNhap}>{t.hoTen} ({t.tenDangNhap})</Select.Option>)}
+            </Select>
           </Form.Item>
 
           <Form.Item className="mb-0 flex justify-end">
@@ -961,23 +1132,36 @@ export default function ClassProfilePage() {
           </Form.Item>
 
           <Form.Item name="hoTen" label="Họ và Tên Bé" rules={[{ required: true, message: 'Nhập họ tên!' }]}>
-            <Input placeholder="Nhập đầy đủ họ và tên" />
+            <Input placeholder="Nhập đầy đủ họ và tên" disabled={editingStudent?.trangThai === 'Đã chuyển trường'} />
           </Form.Item>
 
+          <Row gutter={16} className="mb-2">
+            <Col span={12}>
+              <Form.Item name="nu" valuePropName="checked" className="mb-0">
+                <Checkbox disabled={editingStudent?.trangThai === 'Đã chuyển trường'}>Là Học Sinh Nữ</Checkbox>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="danTocKhac" valuePropName="checked" className="mb-0">
+                <Checkbox disabled={editingStudent?.trangThai === 'Đã chuyển trường'}>Dân Tộc Khác (Không phải Kinh)</Checkbox>
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item name="ngaySinh" label="Ngày Tháng Năm Sinh" rules={[{ required: true, message: 'Chọn ngày sinh!' }]}>
-            <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" placeholder="Chọn ngày" />
+            <DatePicker style={{ width: '100%' }} format="DD/MM/YYYY" placeholder="Chọn ngày" disabled={editingStudent?.trangThai === 'Đã chuyển trường'} />
           </Form.Item>
 
           <Form.Item name="sdtPhuHuynh" label="Số Điện Thoại Phụ Huynh Liên Hệ">
-            <Input placeholder="Ví dụ: 0912345678" />
+            <Input placeholder="Ví dụ: 0912345678" disabled={editingStudent?.trangThai === 'Đã chuyển trường'} />
           </Form.Item>
 
           <Form.Item name="taiKhoanPhuHuynh" label="Tài Khoản Phụ Huynh Liên Kết CSDL">
-            <Input placeholder="Ví dụ: PH_HS002 (Bỏ trống nếu chưa liên kết)" />
+            <Input placeholder="Ví dụ: PH_HS002 (Bỏ trống nếu chưa liên kết)" disabled={editingStudent?.trangThai === 'Đã chuyển trường'} />
           </Form.Item>
 
           <Form.Item name="uuTienZalo" label="Độ Ưu Tiên Nhận Tin" valuePropName="checked">
-            <Radio.Group>
+            <Radio.Group disabled={editingStudent?.trangThai === 'Đã chuyển trường'}>
               <Radio value={true}>Ưu tiên Zalo</Radio>
               <Radio value={false}>SMS Thường</Radio>
             </Radio.Group>

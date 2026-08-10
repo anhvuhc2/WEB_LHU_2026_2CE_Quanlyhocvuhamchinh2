@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Tag, Button, InputNumber, Select, Alert, Space, Typography, Tooltip, message, Badge, Spin, Modal, Empty, Input, Switch } from 'antd';
+import { Card, Table, Tag, Button, InputNumber, Select, Alert, Space, Typography, Tooltip, message, Badge, Spin, Modal, Empty, Input, Switch, Popconfirm } from 'antd';
 import { SafetyOutlined, LockOutlined, ExportOutlined, SendOutlined, ExclamationCircleOutlined, UserOutlined, BookOutlined } from '@ant-design/icons';
 import apiClient from '../../../services/apiClient';
 
@@ -65,12 +65,29 @@ export default function GradingPage() {
   
   // Danh sách học sinh kèm điểm số map động
   const [gradeRecords, setGradeRecords] = useState<StudentGradeRecord[]>([]);
-  const [classes, setClasses] = useState<{ maLop: string; tenLop: string; gvchuNhiem: string | null }[]>([]);
+  const [classes, setClasses] = useState<{ maLop: string; tenLop: string; gvchuNhiem: string | null; nienKhoa?: string }[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>('');
+  const [nienKhoaList, setNienKhoaList] = useState<string[]>([]);
+  const [selectedNienKhoa, setSelectedNienKhoa] = useState<string>('');
+  const [selectedHocKy, setSelectedHocKy] = useState<number>(1);
+
+  // Tự động nhận diện năm học mới nhất làm Active Year
+  const [activeAcademicYear, setActiveAcademicYear] = useState<string>('');
+  const isLockedByYear = selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '';
   
   // Toggling display of all students (including transferred)
   const [showAllStudents, setShowAllStudents] = useState<boolean>(false);
   
+  const handleChotNienKhoa = async (nienKhoaToLock: string) => {
+    try {
+      const res = await apiClient.post('/QuanLyTruong/chot-nien-khoa', { maNienKhoa: nienKhoaToLock });
+      message.success(res.data.message || `Đã chốt năm học ${nienKhoaToLock} làm năm hiện hành!`);
+      setActiveAcademicYear(nienKhoaToLock);
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Có lỗi xảy ra khi chốt niên khóa!');
+    }
+  };
+
   // Quyền năng nhập điểm của Giáo viên đang đăng nhập đối với từng Môn học ở lớp lựa chọn
   const [permissionMap, setPermissionMap] = useState<Record<string, boolean>>({});
   
@@ -141,10 +158,29 @@ export default function GradingPage() {
       const listClasses = resClasses.data || [];
       setClasses(listClasses);
 
+      try {
+        const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
+        if (resNK.data?.activeAcademicYear) {
+          setActiveAcademicYear(resNK.data.activeAcademicYear);
+        }
+      } catch (err) {
+        console.warn("Could not fetch active academic year", err);
+      }
+
+      if (listClasses.length > 0) {
+        const uniqueNK = Array.from(new Set(listClasses.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
+        setNienKhoaList(uniqueNK as string[]);
+      }
+
+      const setInitialClass = async (classCode: string, nk?: string) => {
+        setSelectedNienKhoa(nk || '');
+        setSelectedClass(classCode);
+        await loadClassGradesAndPermissions(classCode, username, role);
+      };
+
       if (role === 'HieuTruong') {
         if (listClasses.length > 0) {
-          setSelectedClass(listClasses[0].maLop);
-          await loadClassGradesAndPermissions(listClasses[0].maLop, username, role);
+          await setInitialClass(listClasses[0].maLop, listClasses[0].nienKhoa);
         }
       } else if (role === 'GiaoVien') {
         // Kiểm tra xem là chủ nhiệm lớp nào
@@ -155,24 +191,19 @@ export default function GradingPage() {
         if (gvcnObj) {
           setIsGvcn(true);
           setMyGvcnClass(gvcnObj.maLop);
-          setSelectedClass(gvcnObj.maLop);
-          await loadClassGradesAndPermissions(gvcnObj.maLop, username, role);
+          await setInitialClass(gvcnObj.maLop, gvcnObj.nienKhoa);
         } else {
           // Là GVBM, tải lịch giảng dạy của mình để biết được phân công chuyên môn
           setIsGvcn(false);
-          setClasses(listClasses); // GVBM vẫn được quyền mở danh sách lớp Toàn Trường để VIEW điểm, chỉ cấm SỬA.
           const resLich = await apiClient.get(`/TaiKhoan/lich-day/${username}`);
           if (resLich.data && Array.isArray(resLich.data)) {
             const assignedClassCodes = Array.from(new Set(resLich.data.map((l: any) => l.maLop))) as string[];
             if (assignedClassCodes.length > 0) {
-              setSelectedClass(assignedClassCodes[0]);
-              await loadClassGradesAndPermissions(assignedClassCodes[0], username, role);
+              const matchedClass = listClasses.find((c: any) => c.maLop === assignedClassCodes[0]);
+              await setInitialClass(assignedClassCodes[0], matchedClass?.nienKhoa);
             } else {
-              setClasses([]);
               message.info(`Giáo viên ${username} chưa được sắp lịch giảng dạy nào.`);
             }
-          } else {
-            setClasses([]);
           }
         }
       }
@@ -183,12 +214,23 @@ export default function GradingPage() {
     }
   };
 
-  const loadClassGradesAndPermissions = async (maLop: string, username: string, userRole: string, includeAll: boolean = showAllStudents) => {
+  const loadClassGradesAndPermissions = async (
+    maLop: string, 
+    username: string, 
+    userRole: string, 
+    includeAll: boolean = showAllStudents,
+    nienKhoaParam?: string,
+    hocKyParam?: number
+  ) => {
     if (!maLop) return;
     setLoading(true);
     try {
       // 1. Phân luồng API tùy thuộc vào yêu cầu (Chỉ hiển thị HS hiện tại, hoặc bật kho lưu trữ tổng)
-      const apiEndpoint = includeAll ? `/HocSinh/truy-xuat-ho-so/${maLop}` : `/LopHoc/${maLop}/danh-sach-hien-tai`;
+      // FIX: Nếu đang xem dữ liệu năm cũ (Archived), BẮT BUỘC tải toàn bộ học sinh (bao gồm đã tốt nghiệp/thăng lớp)
+      const isArchivedYear = selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '';
+      const forceFetchAll = includeAll || isArchivedYear;
+      
+      const apiEndpoint = forceFetchAll ? `/HocSinh/truy-xuat-ho-so/${maLop}` : `/LopHoc/${maLop}/danh-sach-hien-tai`;
       const studentRes = await apiClient.get(apiEndpoint);
       const studentList = studentRes.data || [];
 
@@ -227,6 +269,9 @@ export default function GradingPage() {
       }
 
       // 4. Lấy điểm chi tiết của từng học sinh
+      const nkToUse = nienKhoaParam !== undefined ? nienKhoaParam : selectedNienKhoa;
+      const hkToUse = hocKyParam !== undefined ? hocKyParam : selectedHocKy;
+
       const records: StudentGradeRecord[] = await Promise.all(
         studentList.map(async (hs: any) => {
           const scoreMap: Record<string, ScoreDetail> = {};
@@ -237,8 +282,10 @@ export default function GradingPage() {
           });
 
           try {
-            // Lấy điểm thi từ C#
-            const scoreRes = await apiClient.get(`/BangDiem/xem-diem/${hs.maHs}`);
+            // Lấy điểm thi từ C# lọc theo năm học và học kỳ
+            const scoreRes = await apiClient.get(`/BangDiem/xem-diem/${hs.maHs}`, {
+              params: { nienKhoa: nkToUse, hocKy: hkToUse }
+            });
             if (scoreRes.data && Array.isArray(scoreRes.data)) {
               scoreRes.data.forEach((sc: any) => {
                 const mCode = (sc.maMon || '').toUpperCase();
@@ -279,17 +326,18 @@ export default function GradingPage() {
     }
   };
 
-  const handleClassChange = async (val: string) => {
+  const handleClassChange = async (val: string, nienKhoaParam?: string) => {
     setSelectedClass(val);
     if (currentUser) {
-      await loadClassGradesAndPermissions(val, currentUser.username, currentUser.role, showAllStudents);
+      const nk = nienKhoaParam !== undefined ? nienKhoaParam : selectedNienKhoa;
+      await loadClassGradesAndPermissions(val, currentUser.username, currentUser.role, showAllStudents, nk, selectedHocKy);
     }
   };
 
   const handleToggleShowAll = async (checked: boolean) => {
     setShowAllStudents(checked);
     if (selectedClass && currentUser) {
-      await loadClassGradesAndPermissions(selectedClass, currentUser.username, currentUser.role, checked);
+      await loadClassGradesAndPermissions(selectedClass, currentUser.username, currentUser.role, checked, selectedNienKhoa, selectedHocKy);
     }
   };
 
@@ -323,7 +371,9 @@ export default function GradingPage() {
       maMon: maMon,
       diemThi: scoreState.diemThi,
       xepLoai: scoreState.xepLoai,
-      nhanXet: scoreState.nhanXet || `Ghi nhận ${maMon}`
+      nhanXet: scoreState.nhanXet || `Ghi nhận ${maMon}`,
+      nienKhoa: selectedNienKhoa,
+      hocKy: selectedHocKy
     };
 
     setLoading(true);
@@ -396,14 +446,14 @@ export default function GradingPage() {
   const handleExport = async () => {
     setLoading(true);
     try {
-      const res = await apiClient.get(`/BangDiem/xuat-bang-diem-tong/${selectedClass}`);
+      const res = await apiClient.get(`/BangDiem/xuat-bang-diem-tong/${selectedClass}?nienKhoa=${selectedNienKhoa}&hocKy=${selectedHocKy}`);
       const data = res.data?.data || [];
       const countXuatSac = data.filter((r: any) => r.khenThuong === 'Học sinh xuất sắc').length;
       const countTieuBieu = data.filter((r: any) => r.khenThuong && r.khenThuong.startsWith('Học sinh tiêu biểu')).length;
 
       Modal.success({
         title: `🎉 Bảng Điểm Khen Thưởng Lớp ${selectedClass}`,
-        width: 700,
+        width: 1200,
         content: (
           <div className="max-h-[500px] overflow-y-auto mt-4 text-xs font-sans">
             <p className="text-emerald-700 font-bold mb-2">{res.data.message}</p>
@@ -479,7 +529,7 @@ export default function GradingPage() {
   const handleSendNotification = async () => {
     setLoading(true);
     try {
-      const res = await apiClient.post(`/BangDiem/gui-thong-bao-diem/${selectedClass}`);
+      const res = await apiClient.post(`/BangDiem/gui-thong-bao-diem/${selectedClass}?nienKhoa=${selectedNienKhoa}&hocKy=${selectedHocKy}`);
       message.success(`📤 ${res.data.message || 'Hệ thống đã truyền dữ liệu học bạ đến phụ huynh!'}`);
     } catch (err: any) {
       const respData = err.response?.data;
@@ -531,7 +581,8 @@ export default function GradingPage() {
 
     // Build môn học động
     const subjectCols = currentSubjects.map((sub) => {
-      const isLocked = permissionMap[sub.maMon] !== true;
+      const isSubjectLocked = permissionMap[sub.maMon] !== true;
+      const isLocked = isSubjectLocked || isLockedByYear;
       return {
         title: (
           <SpaceDirectionTitle
@@ -555,6 +606,7 @@ export default function GradingPage() {
                   <InputNumber
                     min={0}
                     max={10}
+                    precision={0}
                     disabled={isRowLocked}
                     value={detail.diemThi}
                     placeholder="1-10"
@@ -711,13 +763,62 @@ export default function GradingPage() {
                />
             </div>
             <div className="flex items-center gap-2">
+              <Text className="text-slate-600 font-bold text-xs">Năm Học:</Text>
+              <Select
+                value={selectedNienKhoa || undefined}
+                onChange={(val) => {
+                  setSelectedNienKhoa(val);
+                  const classesInYear = classes.filter((c: any) => c.nienKhoa === val);
+                  if (classesInYear.length > 0) {
+                    handleClassChange(classesInYear[0].maLop, val);
+                    
+                    // Nếu là năm cũ, tự động bật cờ hiển thị tất cả
+                    if (val !== activeAcademicYear) {
+                      setShowAllStudents(true);
+                    }
+                  } else {
+                    setSelectedClass('');
+                    setGradeRecords([]);
+                  }
+                }}
+                style={{ width: 120 }}
+                className="font-bold border-indigo-400"
+                options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+              />
+              {currentUser?.role === 'HieuTruong' && selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '' && (
+                <Popconfirm title={`Chốt niên khóa ${selectedNienKhoa} làm năm hiện hành (Mở khóa sửa đổi)?`} onConfirm={() => handleChotNienKhoa(selectedNienKhoa)}>
+                  <Button type="primary" danger icon={<LockOutlined />}>Chốt Năm Này</Button>
+                </Popconfirm>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Text className="text-slate-600 font-bold text-xs">Học Kỳ:</Text>
+              <Select
+                value={selectedHocKy}
+                onChange={async (val) => {
+                  setSelectedHocKy(val);
+                  if (selectedClass && currentUser) {
+                    await loadClassGradesAndPermissions(selectedClass, currentUser.username, currentUser.role, showAllStudents, selectedNienKhoa, val);
+                  }
+                }}
+                style={{ width: 110 }}
+                className="font-bold border-indigo-400"
+                options={[
+                  { value: 1, label: 'Giữa Học kỳ 1' },
+                  { value: 2, label: 'Cuối Học kỳ 1' },
+                  { value: 3, label: 'Giữa Học kỳ 2' },
+                  { value: 4, label: 'Cuối Học kỳ 2' }
+                ]}
+              />
+            </div>
+            <div className="flex items-center gap-2">
             <Text className="text-slate-600 font-bold text-xs">Chọn lớp học quản lý:</Text>
             <Select
               value={selectedClass}
-              onChange={handleClassChange}
+              onChange={(val) => handleClassChange(val)}
               style={{ width: 140 }}
               className="font-bold border-indigo-400"
-              options={classes.map(c => ({
+              options={classes.filter((c: any) => c.nienKhoa === selectedNienKhoa).map(c => ({
                 value: c.maLop,
                 label: `Lớp ${c.tenLop}`
               }))}
@@ -769,6 +870,16 @@ export default function GradingPage() {
         />
       )}
 
+      {isLockedByYear && (
+        <Alert
+          title="Năm Học Đã Khóa Sổ (Archived)"
+          description="Dữ liệu điểm số của năm học cũ đã được niêm phong vĩnh viễn. Mọi chức năng sửa đổi bảng điểm đã bị khóa để đảm bảo tính toàn vẹn dữ liệu."
+          type="warning"
+          showIcon
+          className="mb-6 rounded-xl"
+        />
+      )}
+
       <Card 
         className="shadow-sm border border-slate-200 rounded-2xl"
         title={
@@ -782,7 +893,7 @@ export default function GradingPage() {
                   type="default" 
                   icon={<ExportOutlined />} 
                   onClick={handleExport}
-                  disabled={!canPerformGvcnActions || isDataIncomplete}
+                  disabled={!canPerformGvcnActions || isDataIncomplete || isLockedByYear}
                 >
                   Xuất bảng điểm (GVCN)
                 </Button>
@@ -793,7 +904,7 @@ export default function GradingPage() {
                   type="primary" 
                   icon={<SendOutlined />} 
                   onClick={handleSendNotification}
-                  disabled={!canPerformGvcnActions || isDataIncomplete}
+                  disabled={!canPerformGvcnActions || isDataIncomplete || isLockedByYear}
                   className={canPerformGvcnActions && !isDataIncomplete ? 'bg-indigo-600 border-indigo-600' : ''}
                 >
                   Báo Điểm PH (GVCN)

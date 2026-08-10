@@ -508,8 +508,8 @@ export default function PlanningNotificationsPage() {
                   <Select
                     value={selectedClass}
                     onChange={handleClassChange}
-                    style={{ width: 120 }}
-                    options={classes.map(c => ({ value: c.maLop, label: `Lớp ${c.tenLop}` }))}
+                    style={{ width: 170 }}
+                    options={classes.map(c => ({ value: c.maLop, label: `Lớp ${c.tenLop} ${((c as any).nienKhoa ? `(${(c as any).nienKhoa})` : '')}` }))}
                     className="font-bold"
                   />
                 </>

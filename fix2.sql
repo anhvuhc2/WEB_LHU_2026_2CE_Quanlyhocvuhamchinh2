@@ -1,0 +1,5 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+
+UPDATE PhanCongGiangDay SET MaGiaoVien = 'GV003_KieuTrinh' WHERE MaGiaoVien = 'GV_TOAN_Trinh';
+DELETE FROM TaiKhoan WHERE TenDangNhap = 'GV_TOAN_Trinh';

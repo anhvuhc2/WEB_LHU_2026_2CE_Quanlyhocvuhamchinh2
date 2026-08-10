@@ -11,6 +11,7 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [lopHocs, setLopHocs] = useState<any[]>([]);
   const [giaoViens, setGiaoViens] = useState<any[]>([]);
+  const [monHocs, setMonHocs] = useState<any[]>([]);
   const [tienDoKeHoachs, setTienDoKeHoachs] = useState<any[]>([]);
   const [progressType, setProgressType] = useState<string>('gvcn');
   
@@ -42,6 +43,23 @@ export default function AdminDashboardPage() {
   
   const [currentSelectedUsername, setCurrentSelectedUsername] = useState('');
 
+  // Nien Khoa Lock States
+  const [activeAcademicYear, setActiveAcademicYear] = useState<string>('');
+  const [nienKhoaList, setNienKhoaList] = useState<string[]>([]);
+  const [selectedNienKhoaToLock, setSelectedNienKhoaToLock] = useState<string>('');
+
+  const handleChotNienKhoa = async (nienKhoaToLock: string) => {
+    try {
+      const res = await apiClient.post('/QuanLyTruong/chot-nien-khoa', { maNienKhoa: nienKhoaToLock });
+      message.success(res.data.message || `Đã chốt năm học ${nienKhoaToLock} làm năm hiện hành!`);
+      setActiveAcademicYear(nienKhoaToLock);
+      setSelectedNienKhoaToLock('');
+      fetchDashboardData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || 'Có lỗi xảy ra khi chốt niên khóa!');
+    }
+  };
+
   useEffect(() => {
     fetchDashboardData();
   }, []);
@@ -50,9 +68,11 @@ export default function AdminDashboardPage() {
     fetchTienDoData();
   }, [progressType]);
 
-  const fetchTienDoData = async () => {
+  const fetchTienDoData = async (nk?: string) => {
+    const yearToFetch = nk || activeAcademicYear;
+    if (!yearToFetch) return;
     try {
-      const resTienDo = await apiClient.get(`/KeHoach/tien-do-toan-truong?loai=${progressType}`);
+      const resTienDo = await apiClient.get(`/KeHoach/tien-do-toan-truong?loai=${progressType}&nienKhoa=${yearToFetch}`);
       if (resTienDo.data) setTienDoKeHoachs(resTienDo.data);
     } catch (err: any) {
       console.warn("Lỗi tải tiến độ kế hoạch:", err);
@@ -62,16 +82,33 @@ export default function AdminDashboardPage() {
   const fetchDashboardData = async () => {
     setLoading(true);
     try {
+      let currentNK = '';
+      try {
+        const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
+        if (resNK.data?.activeAcademicYear) {
+          setActiveAcademicYear(resNK.data.activeAcademicYear);
+          currentNK = resNK.data.activeAcademicYear;
+        }
+      } catch (e) {}
+
       // 1. Tải danh sách lớp
       const resLop = await apiClient.get('/LopHoc/danh-sach');
-      if (resLop.data) setLopHocs(resLop.data);
+      if (resLop.data) {
+        setLopHocs(resLop.data);
+        const uniqueNK = Array.from(new Set(resLop.data.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
+        setNienKhoaList(uniqueNK as string[]);
+      }
 
       // 2. Tải danh sách giáo viên
       const resGV = await apiClient.get('/QuanLyTruong/danh-sach-giao-vien');
       if (resGV.data) setGiaoViens(resGV.data);
 
+      // Tải danh sách môn học
+      const resMon = await apiClient.get('/QuanLyTruong/danh-sach-mon-hoc');
+      if (resMon.data) setMonHocs(resMon.data);
+
       // 3. Tải tiến độ kế hoạch
-      await fetchTienDoData();
+      await fetchTienDoData(currentNK);
       
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Có lỗi xảy ra khi tải dữ liệu tổng quan!');
@@ -164,7 +201,8 @@ export default function AdminDashboardPage() {
         maMon: values.maMon,
         thu: values.thu,
         buoi: values.buoi,
-        tiet: values.tiet
+        tiet: values.tiet?.toString() || '',
+        nienKhoa: activeAcademicYear
       };
       const res = await apiClient.post('/QuanLyTruong/phan-cong-bo-mon', payload);
       message.success(res.data?.message || 'Đã phân công bộ môn!');
@@ -358,11 +396,69 @@ export default function AdminDashboardPage() {
 
   const items = [
     {
+      key: '0',
+      label: <span><LockOutlined />Cấu hình Tuần tự Hiện Hành</span>,
+      children: (
+        <Card title="Khóa sổ Điện tử Toàn Trường (Lock Mechanism)" bordered={false}>
+          <Alert
+            message="Chế độ Tường lửa (Read-only) Áp dụng theo Niên khóa"
+            description="Năm học nào được chốt làm Cục diện Hiện Hành thì Giáo viên mới được thao tác Cập nhật. Các dữ liệu thuộc năm học khác (quá khứ) tự động kích hoạt Read-only để chống sửa đổi."
+            type="warning"
+            showIcon
+            className="mb-4"
+          />
+          <div className="flex flex-col md:flex-row items-start md:items-center gap-6 bg-slate-50 p-6 rounded-xl border border-slate-200">
+            <div>
+              <div className="text-sm font-semibold text-slate-500 mb-2">Năm học Hiện hành đang Mở Khóa:</div>
+              {activeAcademicYear ? (
+                <Tag color="green" className="text-2xl px-4 py-2 font-bold m-0 border-green-300">{activeAcademicYear}</Tag>
+              ) : (
+                <Spin />
+              )}
+            </div>
+            <div className="hidden md:block w-px h-16 bg-slate-300"></div>
+            <div>
+              <div className="text-sm font-semibold text-slate-500 mb-2">Thay đổi Cục diện Niên khóa:</div>
+              <Space size="middle">
+                <Select 
+                  size="large"
+                  style={{ width: 200 }} 
+                  placeholder="Chọn năm học muốn kích hoạt..." 
+                  value={selectedNienKhoaToLock || undefined}
+                  onChange={(val) => setSelectedNienKhoaToLock(val)}
+                  options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+                />
+                <Button 
+                  size="large"
+                  type="primary" 
+                  danger 
+                  icon={<LockOutlined />} 
+                  disabled={!selectedNienKhoaToLock || selectedNienKhoaToLock === activeAcademicYear}
+                  onClick={() => {
+                    Modal.confirm({
+                      title: 'Xác nhận Kích hoạt Ổ Khóa Hệ thống',
+                      content: `Quyết định này sẽ biến dữ liệu của tât cả năm học không phải ${selectedNienKhoaToLock} thành dạng xem (Read-only). Các giáo viên sẽ mất quyền sửa điểm của các lớp không thuộc năm ${selectedNienKhoaToLock}. Bạn chắc chắn chứ?`,
+                      okText: 'Áp dụng Lập tức',
+                      okButtonProps: { danger: true },
+                      cancelText: 'Quay lại',
+                      onOk: () => handleChotNienKhoa(selectedNienKhoaToLock)
+                    });
+                  }}
+                >
+                  Áp Dụng Lập Tức Toàn Trường
+                </Button>
+              </Space>
+            </div>
+          </div>
+        </Card>
+      ),
+    },
+    {
       key: '1',
       label: <span><AppstoreOutlined />Quản lý Lớp Học</span>,
       children: (
         <Card title="Giao diện theo dõi cấu trúc Lớp" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddClassModalOpen(true)}>Thêm Lớp Mới</Button>}>
-          <Table dataSource={lopHocs} columns={lopHocColumns} rowKey="maLop" loading={loading} />
+          <Table dataSource={lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear)} columns={lopHocColumns} rowKey="maLop" loading={loading} />
         </Card>
       ),
     },
@@ -392,7 +488,9 @@ export default function AdminDashboardPage() {
                     <Input placeholder="Nhập mã lớp (VD: L1A)" />
                   </Form.Item>
                   <Form.Item name="maMon" label="Mã Môn Học (nếu có)">
-                    <Input placeholder="Để trống nếu định hỏi quyền Chủ nhiệm" />
+                    <Select placeholder="Chọn môn học (Để trống nếu hỏi quyền Chủ nhiệm)" allowClear>
+                      {monHocs.map(m => <Select.Option key={m.maMon} value={m.maMon}>{m.tenMon} ({m.maMon})</Select.Option>)}
+                    </Select>
                   </Form.Item>
                   <Button type="primary" htmlType="submit" className="w-full">
                     Truy vấn dữ liệu Server
@@ -407,7 +505,7 @@ export default function AdminDashboardPage() {
             <Col xs={24} lg={14}>
               <Card type="inner" title="2. Trích Xuất File Tài Khoản Phụ Huynh Theo Lớp">
                 <div className="flex gap-2 mb-4 flex-wrap">
-                  {lopHocs.map(c => (
+                  {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => (
                     <Button key={c.maLop} type={selectedClassForParents === c.maLop ? 'primary' : 'default'} onClick={() => fetchParentsForClass(c.maLop)}>
                       Lớp {c.tenLop}
                     </Button>
@@ -442,7 +540,7 @@ export default function AdminDashboardPage() {
             <div className="flex items-center gap-3 mb-4">
               <span className="font-semibold text-slate-700">Chọn lớp cần xem:</span>
               <div className="flex flex-wrap gap-2">
-                {lopHocs.map(c => (
+                {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => (
                   <Button 
                     key={c.maLop} 
                     type={selectedClassForGrades === c.maLop ? 'primary' : 'default'}
@@ -555,7 +653,7 @@ export default function AdminDashboardPage() {
               <Form form={assignHomeroomForm} layout="vertical" onFinish={handleAssignHomeroom}>
                 <Form.Item name="maLop" label="Lớp Học" rules={[{ required: true }]}>
                   <Select placeholder="Chọn lớp...">
-                    {lopHocs.map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop}</Select.Option>)}
+                    {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop}</Select.Option>)}
                   </Select>
                 </Form.Item>
                 <Button type="primary" htmlType="submit" className="w-full">Xác nhận phân công Chủ nhiệm</Button>
@@ -569,11 +667,13 @@ export default function AdminDashboardPage() {
               <Form form={assignSubjectForm} layout="vertical" onFinish={handleAssignSubject}>
                 <Form.Item name="maLop" label="Học Lớp" rules={[{ required: true }]}>
                   <Select placeholder="Chọn lớp...">
-                    {lopHocs.map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop}</Select.Option>)}
+                    {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => <Select.Option key={c.maLop} value={c.maLop}>{c.tenLop}</Select.Option>)}
                   </Select>
                 </Form.Item>
-                <Form.Item name="maMon" label="Mã Môn Học" rules={[{ required: true }]}>
-                  <Input placeholder="Ví dụ: TOAN (Toán), TV (Tiếng Việt)..." />
+                <Form.Item name="maMon" label="Môn Học Phân Công" rules={[{ required: true }]}>
+                  <Select placeholder="Mở danh sách để chọn Môn học...">
+                    {monHocs.map(m => <Select.Option key={m.maMon} value={m.maMon}>{m.tenMon} ({m.maMon})</Select.Option>)}
+                  </Select>
                 </Form.Item>
                 <Row gutter={8}>
                   <Col span={8}>
