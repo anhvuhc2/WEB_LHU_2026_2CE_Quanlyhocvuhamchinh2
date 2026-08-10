@@ -11,7 +11,7 @@ public partial class TaiKhoan
 
     public string HoTen { get; set; } = null!;
 
-    public string? VaiTro { get; set; }
+    public string VaiTro { get; set; } = null!;
 
     public virtual ICollection<DiemDanh> DiemDanhs { get; set; } = new List<DiemDanh>();
 

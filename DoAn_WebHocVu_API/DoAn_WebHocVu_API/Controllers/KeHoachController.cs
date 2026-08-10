@@ -135,12 +135,19 @@ namespace DoAn_WebHocVu_API.Controllers
         }
 
         [HttpGet("tien-do-toan-truong")]
-        public async Task<IActionResult> GetTienDoToanTruong([FromQuery] string loai = "gvcn")
+        public async Task<IActionResult> GetTienDoToanTruong([FromQuery] string loai = "gvcn", [FromQuery] string? nienKhoa = null)
         {
             if (loai == "gvbm")
             {
                 // Thống kê kế hoạch của tất cả giáo viên bộ môn được phân công
-                var danhSachPhanCong = await _context.PhanCongGiangDays
+                IQueryable<PhanCongGiangDay> queryPc = _context.PhanCongGiangDays;
+                if (!string.IsNullOrEmpty(nienKhoa))
+                {
+                    string nkClean = nienKhoa.Trim();
+                    queryPc = queryPc.Where(p => p.NienKhoa == nkClean);
+                }
+
+                var danhSachPhanCong = await queryPc
                     .Include(p => p.MaLopNavigation)
                     .Include(p => p.MaGiaoVienNavigation)
                     .Include(p => p.MaMonNavigation)
@@ -189,7 +196,13 @@ namespace DoAn_WebHocVu_API.Controllers
             else
             {
                 // Thống kê kế hoạch chủ nhiệm của GVCN
-                var dsLop = await _context.LopHocs.ToListAsync();
+                IQueryable<LopHoc> queryLop = _context.LopHocs;
+                if (!string.IsNullOrEmpty(nienKhoa))
+                {
+                    string nkClean = nienKhoa.Trim();
+                    queryLop = queryLop.Where(l => l.NienKhoa == nkClean);
+                }
+                var dsLop = await queryLop.ToListAsync();
                 var kq = new List<object>();
 
                 foreach(var l in dsLop)

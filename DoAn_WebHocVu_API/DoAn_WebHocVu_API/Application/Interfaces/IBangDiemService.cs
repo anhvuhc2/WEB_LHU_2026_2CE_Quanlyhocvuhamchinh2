@@ -7,8 +7,8 @@ namespace DoAn_WebHocVu_API.Application.Interfaces
     public interface IBangDiemService
     {
         Task<ServiceResult> NhapDiemAsync(BangDiemController.NhapDiemDto model, string maGiaoVien);
-        Task<ServiceResult> XemDiemAsync(string maHs);
-        Task<ServiceResult> XuatBangDiemTongAsync(string maLop, string maGiaoVien, bool isHieuTruong);
-        Task<ServiceResult> GuiThongBaoDiemAsync(string maLop, string maGiaoVien);
+        Task<ServiceResult> XemDiemAsync(string maHs, string? nienKhoa, int? hocKy);
+        Task<ServiceResult> XuatBangDiemTongAsync(string maLop, string maGiaoVien, bool isHieuTruong, string? nienKhoa = null, int? hocKy = null);
+        Task<ServiceResult> GuiThongBaoDiemAsync(string maLop, string maGiaoVien, string? nienKhoa = null, int? hocKy = null);
     }
 }

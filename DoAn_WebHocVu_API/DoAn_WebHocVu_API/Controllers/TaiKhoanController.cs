@@ -100,17 +100,35 @@ namespace DoAn_WebHocVu_API.Controllers
                 })
                 .ToListAsync();
 
+            var activeYear = await _context.DanhMucNienKhoas
+                .Where(n => n.IsActive)
+                .Select(n => n.MaNienKhoa)
+                .FirstOrDefaultAsync() ?? "2025-2026"; // Fallback nếu lỗi
+
+            var allLopHocs = await _context.LopHocs.ToListAsync();
+
             // BƯỚC 2: Chế biến thêm cột "NhiemVu" ngay trên RAM của máy chủ
-            var danhSachHoanThien = danhSachTho.Select(tk => new
-            {
-                TenDangNhap = tk.TenDangNhap,
-                HoTen = tk.HoTen,
-                VaiTro = tk.VaiTro,
-                // THUẬT TOÁN ĐỌC TÊN:
-                NhiemVu = tk.TenDangNhap.StartsWith("GVCN")
-                    ? $"Giáo viên chủ nhiệm {tk.TenDangNhap.Substring(4)}"
-                    : (tk.PhanCongGiangDays.Count > 0 ? "Giáo viên bộ môn" : "Chưa phân công"),
-                PhanCongGiangDays = tk.PhanCongGiangDays
+            var danhSachHoanThien = danhSachTho.Select(tk => {
+                var cacLopChuNhiem = allLopHocs.Where(l => l.GvchuNhiem == tk.TenDangNhap && l.NienKhoa == activeYear).ToList();
+                string nhiemVu = "Chưa phân công";
+
+                if (cacLopChuNhiem.Count > 0)
+                {
+                    nhiemVu = $"Chủ nhiệm lớp {string.Join(", ", cacLopChuNhiem.Select(l => l.TenLop))}";
+                }
+                else if (tk.PhanCongGiangDays.Count > 0)
+                {
+                    nhiemVu = "Giáo viên bộ môn";
+                }
+
+                return new
+                {
+                    TenDangNhap = tk.TenDangNhap,
+                    HoTen = tk.HoTen,
+                    VaiTro = tk.VaiTro,
+                    NhiemVu = nhiemVu,
+                    PhanCongGiangDays = tk.PhanCongGiangDays
+                };
             });
 
             return Ok(danhSachHoanThien);
@@ -159,12 +177,18 @@ namespace DoAn_WebHocVu_API.Controllers
                 }
 
                 // Luật 4: Kiểm tra xem học sinh này có thuộc lớp do cô này chủ nhiệm không
-                var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hocSinh.MaLop);
+                var lichSu = await _context.LichSuPhanLops
+                    .Where(ls => ls.MaHs == maHS)
+                    .OrderByDescending(ls => ls.NienKhoa)
+                    .FirstOrDefaultAsync();
+                
+                string currentLop = lichSu?.MaLop ?? "";
+                var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == currentLop);
                 var userDangNhap = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
                 if (lopHoc == null || lopHoc.GvchuNhiem != userDangNhap)
                 {
-                    return StatusCode(403, new { message = $"⛔ Từ chối! Học sinh {hocSinh.HoTen} thuộc lớp {hocSinh.MaLop}, bạn không phải GVCN lớp này nên không được phép tạo tài khoản phụ huynh cho em này!" });
+                    return StatusCode(403, new { message = $"⛔ Từ chối! Học sinh {hocSinh.HoTen} thuộc lớp {currentLop}, bạn không phải GVCN lớp này nên không được phép tạo tài khoản phụ huynh cho em này!" });
                 }
             }
             // =========================================================================
@@ -222,12 +246,18 @@ namespace DoAn_WebHocVu_API.Controllers
                 var hocSinh = await _context.HocSinhs.FirstOrDefaultAsync(hs => hs.TaiKhoanPhuHuynh == maClean);
                 if (hocSinh != null)
                 {
-                    var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hocSinh.MaLop);
+                    var lichSu = await _context.LichSuPhanLops
+                        .Where(ls => ls.MaHs == hocSinh.MaHs)
+                        .OrderByDescending(ls => ls.NienKhoa)
+                        .FirstOrDefaultAsync();
+                    
+                    string currentLop = lichSu?.MaLop ?? "";
+                    var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == currentLop);
 
                     // Tận dụng luôn biến userDangNhap đã khai báo sẵn ở dòng 142 bên trên
                     if (lopHoc == null || lopHoc.GvchuNhiem != userDangNhap)
                     {
-                        return StatusCode(403, new { message = $"⛔ Từ chối! Phụ huynh này thuộc lớp {hocSinh.MaLop}, bạn không phải GVCN lớp này nên không thể xóa!" });
+                        return StatusCode(403, new { message = $"⛔ Từ chối! Phụ huynh này thuộc lớp {currentLop}, bạn không phải GVCN lớp này nên không thể xóa!" });
                     }
                 }
             }

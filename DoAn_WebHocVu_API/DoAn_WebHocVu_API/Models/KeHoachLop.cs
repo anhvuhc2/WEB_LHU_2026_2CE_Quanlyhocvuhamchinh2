@@ -13,16 +13,17 @@ public partial class KeHoachLop
 
     public string NoiDung { get; set; } = null!;
 
-    public string? LoaiThongBao { get; set; }
+    public string LoaiThongBao { get; set; } = null!;
 
     public DateTime? NgayDang { get; set; }
 
     public string? NguoiDang { get; set; }
+
+    public string? FileDinhKem { get; set; }
 
     public virtual LopHoc? MaLopNavigation { get; set; }
 
     public virtual TaiKhoan? NguoiDangNavigation { get; set; }
 
     public virtual ICollection<TuongTac> TuongTacs { get; set; } = new List<TuongTac>();
-    public string? FileDinhKem { get; set; }
 }

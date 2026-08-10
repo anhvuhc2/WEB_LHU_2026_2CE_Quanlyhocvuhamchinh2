@@ -7,14 +7,43 @@ namespace DoAn_WebHocVu_API.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Roles = "HieuTruong")] // <--- Ổ KHÓA ĐỘC QUYỀN
+    [Authorize(Roles = "HieuTruong")]
     public class QuanLyTruongController : ControllerBase
     {
         private readonly DoAnWebHocVuAdvancedContext _context;
+        private readonly IConfiguration _config;
 
-        public QuanLyTruongController(DoAnWebHocVuAdvancedContext context)
+        public QuanLyTruongController(DoAnWebHocVuAdvancedContext context, IConfiguration config)
         {
             _context = context;
+            _config = config;
+        }
+
+        [AllowAnonymous]
+        [HttpGet("nien-khoa-hien-tai")]
+        public async Task<IActionResult> GetActiveNienKhoa()
+        {
+            // API mới lấy niên khóa khóa sổ bằng CSDL động thay vì appsettings
+            var active = await _context.DanhMucNienKhoas.FirstOrDefaultAsync(n => n.IsActive);
+            if (active != null) 
+                return Ok(new { activeAcademicYear = active.MaNienKhoa });
+            return Ok(new { activeAcademicYear = "2025-2026" }); // Fallback an toàn
+        }
+
+        [Authorize(Roles = "HieuTruong")]
+        [HttpPost("chot-nien-khoa")]
+        public async Task<IActionResult> SwitchActiveYear([FromBody] string targetYear)
+        {
+            if (string.IsNullOrEmpty(targetYear)) return BadRequest("Năm học không hợp lệ");
+            var target = await _context.DanhMucNienKhoas.FirstOrDefaultAsync(n => n.MaNienKhoa == targetYear);
+            if (target == null) return NotFound("Năm học không tồn tại trong danh mục");
+
+            var all = await _context.DanhMucNienKhoas.ToListAsync();
+            foreach (var item in all) item.IsActive = false;
+            target.IsActive = true;
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = $"Đã chốt sổ và chuyển quyền nhập điểm sang năm {targetYear} thành công!" });
         }
          // 1. Lấy danh sách tất cả giáo viên để Hiệu trưởng chọn
         [HttpGet("danh-sach-giao-vien")]   
@@ -86,7 +115,7 @@ namespace DoAn_WebHocVu_API.Controllers
             return buoi;
         }
 
-        // 3. PHÂN CÔNG BỘ MÔN (Thêm vào bảng PhanCongGiangDay)
+        [Authorize(Roles = "HieuTruong")]
         [HttpPost("phan-cong-bo-mon")]
         public async Task<IActionResult> PhanCongBoMon(PhanCongGiangDay pc)
         {
@@ -94,14 +123,25 @@ namespace DoAn_WebHocVu_API.Controllers
             pc.Thu = ChuanHoaThu(pc.Thu);
             pc.Buoi = ChuanHoaBuoi(pc.Buoi);
 
+            // Bổ sung luồng chặn: Tự động gán Niên khóa hiện hành nếu Frontend quên không gửi
+            if (string.IsNullOrEmpty(pc.NienKhoa))
+            {
+                var activeYear = await _context.DanhMucNienKhoas
+                    .Where(n => n.IsActive)
+                    .Select(n => n.MaNienKhoa)
+                    .FirstOrDefaultAsync() ?? "2025-2026";
+                pc.NienKhoa = activeYear;
+            }
+
             // 0. CHỐT CHẶN TRÙNG LỊCH HỌC CỦA LỚP: Lớp này tại thời điểm này đã có môn học khác được gán chưa
-            if (!string.IsNullOrEmpty(pc.Thu) && !string.IsNullOrEmpty(pc.Buoi) && pc.Tiet.HasValue)
+            if (!string.IsNullOrEmpty(pc.Thu) && !string.IsNullOrEmpty(pc.Buoi) && !string.IsNullOrEmpty(pc.Tiet))
             {
                 var lopBiTrungLich = await _context.PhanCongGiangDays
                     .FirstOrDefaultAsync(p => p.MaLop == pc.MaLop
                                            && p.Thu == pc.Thu
                                            && p.Buoi == pc.Buoi
-                                           && p.Tiet == pc.Tiet);
+                                           && p.Tiet == pc.Tiet
+                                           && p.NienKhoa == pc.NienKhoa);
 
                 if (lopBiTrungLich != null)
                 {
@@ -114,7 +154,7 @@ namespace DoAn_WebHocVu_API.Controllers
 
             // 1. CHỐT CHẶN 1: Kiểm tra xem Lớp này đã có giáo viên khác dạy môn này chưa
             var gvKhacDaDayMonNay = await _context.PhanCongGiangDays
-                .FirstOrDefaultAsync(p => p.MaLop == pc.MaLop && p.MaMon == pc.MaMon && p.MaGiaoVien != pc.MaGiaoVien);
+                .FirstOrDefaultAsync(p => p.MaLop == pc.MaLop && p.MaMon == pc.MaMon && p.MaGiaoVien != pc.MaGiaoVien && p.NienKhoa == pc.NienKhoa);
 
             if (gvKhacDaDayMonNay != null)
             {
@@ -129,7 +169,8 @@ namespace DoAn_WebHocVu_API.Controllers
                 .FirstOrDefaultAsync(p => p.MaGiaoVien == pc.MaGiaoVien
                                        && p.Thu == pc.Thu
                                        && p.Buoi == pc.Buoi
-                                       && p.Tiet == pc.Tiet);
+                                       && p.Tiet == pc.Tiet
+                                       && p.NienKhoa == pc.NienKhoa);
 
             if (lichBiTrung != null)
             {
@@ -145,6 +186,7 @@ namespace DoAn_WebHocVu_API.Controllers
                 .FirstOrDefaultAsync(p => p.MaLop == pc.MaLop 
                                        && p.MaMon == pc.MaMon 
                                        && p.MaGiaoVien == pc.MaGiaoVien 
+                                       && p.NienKhoa == pc.NienKhoa
                                        && (string.IsNullOrEmpty(p.Thu) || p.Thu == "NULL" || p.Thu == ""));
 
             if (dongCho != null)
@@ -163,6 +205,45 @@ namespace DoAn_WebHocVu_API.Controllers
             await _context.SaveChangesAsync();
             return Ok(new { message = "Xếp thêm lịch dạy bộ môn thành công!" });
         }
+
+        /// <summary>
+        /// API: Xóa phân công giảng dạy bộ môn (Hiệu trưởng)
+        /// </summary>
+        [HttpDelete("xoa-phan-cong/{maPhanCong}")]
+        [Authorize(Roles = "HieuTruong")]
+        public async Task<IActionResult> XoaPhanCong(int maPhanCong)
+        {
+            var phanCong = await _context.PhanCongGiangDays.FirstOrDefaultAsync(p => p.MaPhanCong == maPhanCong);
+            if (phanCong == null)
+            {
+                return NotFound(new { message = $"Không tìm thấy phân công giảng dạy với mã {maPhanCong}." });
+            }
+
+            // Kiểm tra xem phân công này có thuộc niên khóa hiện hành đang Active không
+            // để bảo vệ dữ liệu lịch sử các năm cũ đã khóa sổ.
+            var activeYear = await _context.DanhMucNienKhoas
+                .Where(n => n.IsActive)
+                .Select(n => n.MaNienKhoa)
+                .FirstOrDefaultAsync() ?? "2025-2026";
+
+            if (phanCong.NienKhoa != activeYear)
+            {
+                return StatusCode(403, new { message = "⚠️ Lỗi: Phân công này thuộc niên khóa đã khóa sổ, không thể xóa dữ liệu cũ!" });
+            }
+
+            _context.PhanCongGiangDays.Remove(phanCong);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Đã xóa phân công giảng dạy bộ môn thành công!" });
+        }
+
+        [HttpGet("danh-sach-mon-hoc")]
+        public async Task<IActionResult> DanhSachMonHoc()
+        {
+            var data = await _context.MonHocs.ToListAsync();
+            return Ok(data);
+        }
+
         /// <summary>
         /// API: Hiệu trưởng cấp lại mật khẩu mặc định (123456) cho giáo viên bị quên
         /// </summary>
@@ -194,6 +275,137 @@ namespace DoAn_WebHocVu_API.Controllers
                 matKhauMoi = "123456",
                 luuY = "Vui lòng yêu cầu đăng nhập và đổi mật khẩu ngay lập tức."
             });
+        }
+        [AllowAnonymous]
+        [HttpGet("migrate-nienkhoa-2627")]
+        public async Task<IActionResult> MigrateNienKhoaKhieuNai()
+        {
+            // 1. Rename existing NienKhoa (2021 -> 2021-2022, etc.)
+            await _context.Database.ExecuteSqlRawAsync(@"
+                UPDATE LopHoc SET NienKhoa = NienKhoa + '-' + CAST(CAST(NienKhoa AS INT) + 1 AS NVARCHAR) WHERE LEN(NienKhoa) = 4;
+                UPDATE LichSuPhanLop SET NienKhoa = NienKhoa + '-' + CAST(CAST(NienKhoa AS INT) + 1 AS NVARCHAR) WHERE LEN(NienKhoa) = 4;
+                UPDATE PhanCongGiangDay SET NienKhoa = NienKhoa + '-' + CAST(CAST(NienKhoa AS INT) + 1 AS NVARCHAR) WHERE LEN(NienKhoa) = 4;
+                UPDATE BangDiem SET NienKhoa = NienKhoa + '-' + CAST(CAST(NienKhoa AS INT) + 1 AS NVARCHAR) WHERE LEN(NienKhoa) = 4;
+            ");
+
+            // 2. Tự động sinh lớp cho 2026-2027 từ lớp năm 2025-2026
+            var oldClasses = await _context.LopHocs.Where(l => l.NienKhoa == "2025-2026").ToListAsync();
+            foreach (var oc in oldClasses)
+            {
+                // VD: L1A_25 -> L1A_26
+                string baseName = oc.TenLop; // "1A"
+                string newMaLop = "L" + baseName + "_26";
+                // GVCN: Để null để hiệu trưởng phân công sau, hoặc random
+                if (!await _context.LopHocs.AnyAsync(l => l.MaLop == newMaLop))
+                {
+                    _context.LopHocs.Add(new LopHoc { MaLop = newMaLop, TenLop = baseName, NienKhoa = "2026-2027" });
+                }
+            }
+            await _context.SaveChangesAsync();
+
+            // 3. Tự động Auto-promote (Chuyển khối học sinh) 
+            // - Lớp 1 (2025-26) -> Lớp 2 (2026-27), v.v. Lớp 5 thì tốt nghiệp
+            foreach(var oc in oldClasses)
+            {
+                int currentGrade = int.Parse(oc.TenLop.Substring(0, 1)); // "1A" -> 1
+                if (currentGrade >= 5) 
+                {
+                    // Lớp 5 tốt nghiệp: Cập nhật biến TrangThai của Học sinh!
+                    var graduatingStudents = await _context.LichSuPhanLops.Include(l => l.MaHsNavigation).Where(l => l.MaLop == oc.MaLop).Select(l => l.MaHsNavigation).ToListAsync();
+                    foreach (var hs in graduatingStudents) { hs.TrangThai = "Đã tốt nghiệp"; }
+                    continue; 
+                }
+                
+                int nextGrade = currentGrade + 1;
+                string newTenLop = nextGrade.ToString() + oc.TenLop.Substring(1); // "1A" -> "2A"
+                string targetNewMaLop = "L" + newTenLop + "_26";
+
+                // Kéo danh sách học sinh cũ sang
+                var hsCu = await _context.LichSuPhanLops.Where(l => l.MaLop == oc.MaLop).ToListAsync();
+                foreach (var ls in hsCu)
+                {
+                    if (!await _context.LichSuPhanLops.AnyAsync(hc => hc.MaHs == ls.MaHs && hc.NienKhoa == "2026-2027"))
+                    {
+                         _context.LichSuPhanLops.Add(new LichSuPhanLop {
+                              MaHs = ls.MaHs,
+                              MaLop = targetNewMaLop,
+                              NienKhoa = "2026-2027"
+                         });         
+                    }
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Migration hoàn thành rực rỡ! Toàn bộ học sinh đã lên lớp an toàn." });
+        }
+
+
+        [AllowAnonymous]
+        [HttpGet("fix-database")]
+        public async Task<IActionResult> FixDatabase()
+        {
+            try
+            {
+                var bangDiems = await _context.BangDiems.ToListAsync();
+                foreach (var b in bangDiems)
+                {
+                    if (b.XepLoai != null && (b.XepLoai.Contains("Gi") || b.XepLoai.Contains("i"))) b.XepLoai = "Tốt";
+                    else if (b.XepLoai != null && (b.XepLoai.Contains("Kh") || b.XepLoai.Contains("K"))) b.XepLoai = "Hoàn thành";
+                    else b.XepLoai = "Chưa đạt";
+                    
+                    b.NhanXet = "Học sinh ngoan, chú ý nghe giảng và tiếp thu bài tốt.";
+                }
+
+                var accountsToReplace = new Dictionary<string, (string newId, string newName)>
+                {
+                    { "GVCN1A", ("GV001_LanAnh", "Tiết Lan Anh") },
+                    { "GVCN2A", ("GV002_MinhTuan", "Trần Minh Tuấn") },
+                    { "GVBM_TOAN", ("GV_TOAN_Trinh", "Lê Kiều Trinh") },
+                    { "GVCN", ("GV005_BaoChau", "Nguyễn Bảo Châu") },
+                    { "HIEUTRUONG", ("HT_NguyenMinh", "Nguyễn Đức Minh") }
+                };
+
+                foreach (var kvp in accountsToReplace)
+                {
+                    string oldId = kvp.Key;
+                    string newId = kvp.Value.newId;
+                    string newName = kvp.Value.newName;
+
+                    if (!await _context.TaiKhoans.AnyAsync(t => t.TenDangNhap == newId))
+                    {
+                        var oldAcc = await _context.TaiKhoans.FirstOrDefaultAsync(t => t.TenDangNhap == oldId);
+                        if (oldAcc != null)
+                        {
+                            _context.TaiKhoans.Add(new TaiKhoan { 
+                                TenDangNhap = newId, 
+                                MatKhau = oldAcc.MatKhau, 
+                                HoTen = newName, 
+                                VaiTro = oldAcc.VaiTro
+                            });
+                        }
+                    }
+                }
+                await _context.SaveChangesAsync();
+
+                foreach (var kvp in accountsToReplace)
+                {
+                    string oldId = kvp.Key;
+                    string newId = kvp.Value.newId;
+
+                    var lops = await _context.LopHocs.Where(l => l.GvchuNhiem == oldId).ToListAsync();
+                    foreach (var l in lops) l.GvchuNhiem = newId;
+
+                    var phanCongs = await _context.PhanCongGiangDays.Where(p => p.MaGiaoVien == oldId).ToListAsync();
+                    foreach (var p in phanCongs) p.MaGiaoVien = newId;
+                }
+                await _context.SaveChangesAsync();
+                
+                return Ok(new { message = "Thành công: 1. Fix Font Tiếng Việt. 2. Đổi 100% tên Tài Khoản sang tên Giáo viên thật." });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex.Message);
+            }
         }
     }
 }

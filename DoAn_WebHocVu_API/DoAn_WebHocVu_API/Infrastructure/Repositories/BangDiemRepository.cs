@@ -46,9 +46,9 @@ namespace DoAn_WebHocVu_API.Infrastructure.Repositories
                 .AnyAsync(pc => pc.MaLop == maLop && pc.MaMon.Trim().ToUpper() == mmTrim);
         }
 
-        public async Task<BangDiem?> GetBangDiemAsync(string maHs, string maMon)
+        public async Task<BangDiem?> GetBangDiemAsync(string maHs, string maMon, string nienKhoa, int hocKy)
         {
-            return await _context.BangDiems.FirstOrDefaultAsync(b => b.MaHs == maHs && b.MaMon == maMon);
+            return await _context.BangDiems.FirstOrDefaultAsync(b => b.MaHs == maHs && b.MaMon == maMon && b.NienKhoa == nienKhoa && b.HocKy == hocKy);
         }
 
         public void AddBangDiem(BangDiem bangDiem)
@@ -67,9 +67,18 @@ namespace DoAn_WebHocVu_API.Infrastructure.Repositories
             return mon?.TenMon;
         }
 
-        public async Task<List<BangDiem>> GetBangDiemsOfHocSinhAsync(string maHs)
+        public async Task<List<BangDiem>> GetBangDiemsOfHocSinhAsync(string maHs, string? nienKhoa, int? hocKy)
         {
-            return await _context.BangDiems.Where(b => b.MaHs == maHs).ToListAsync();
+            var query = _context.BangDiems.Where(b => b.MaHs == maHs);
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                query = query.Where(b => b.NienKhoa == nienKhoa);
+            }
+            if (hocKy.HasValue)
+            {
+                query = query.Where(b => b.HocKy == hocKy.Value);
+            }
+            return await query.ToListAsync();
         }
 
         public async Task<List<HocSinh>> GetDanhSachHocSinhByLopAsync(string maLop)
@@ -77,9 +86,18 @@ namespace DoAn_WebHocVu_API.Infrastructure.Repositories
             return await _context.HocSinhs.Where(h => h.MaLop == maLop).ToListAsync();
         }
 
-        public async Task<List<BangDiem>> GetBangDiemsByHocSinhsAsync(List<string> maHocSinhs)
+        public async Task<List<BangDiem>> GetBangDiemsByHocSinhsAsync(List<string> maHocSinhs, string? nienKhoa = null, int? hocKy = null)
         {
-            return await _context.BangDiems.Where(b => maHocSinhs.Contains(b.MaHs)).ToListAsync();
+            var query = _context.BangDiems.Where(b => maHocSinhs.Contains(b.MaHs));
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                query = query.Where(b => b.NienKhoa == nienKhoa);
+            }
+            if (hocKy.HasValue)
+            {
+                query = query.Where(b => b.HocKy == hocKy.Value);
+            }
+            return await query.ToListAsync();
         }
 
         public async Task<List<MonHoc>> GetAllMonHocAsync()

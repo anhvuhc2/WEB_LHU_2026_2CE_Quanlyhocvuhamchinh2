@@ -72,13 +72,18 @@ namespace DoAn_WebHocVu_API.Application.Services
                     return ServiceResult.BadRequest($"Môn {model.MaMon} yêu cầu phải có điểm số, không được bỏ trống!");
             }
 
-            var bangDiem = await _repository.GetBangDiemAsync(model.MaHS, model.MaMon);
+            string nienKhoa = model.NienKhoa ?? lopHoc?.NienKhoa ?? "2025-2026";
+            int hocKy = model.HocKy ?? 1;
+
+            var bangDiem = await _repository.GetBangDiemAsync(model.MaHS, model.MaMon, nienKhoa, hocKy);
             if (bangDiem == null)
             {
                 bangDiem = new BangDiem
                 {
                     MaHs = model.MaHS,
                     MaMon = model.MaMon,
+                    NienKhoa = nienKhoa,
+                    HocKy = hocKy,
                     DiemThi = model.DiemThi,
                     XepLoai = model.XepLoai?.ToUpper(),
                     NhanXet = model.NhanXet,
@@ -99,9 +104,9 @@ namespace DoAn_WebHocVu_API.Application.Services
             return ServiceResult.Ok($"Thành công! Đã cập nhật dữ liệu học tập môn {monHoc.TenMon} cho học sinh {hocSinh.HoTen}.");
         }
 
-        public async Task<ServiceResult> XemDiemAsync(string maHs)
+        public async Task<ServiceResult> XemDiemAsync(string maHs, string? nienKhoa, int? hocKy)
         {
-            var bangDiems = await _repository.GetBangDiemsOfHocSinhAsync(maHs);
+            var bangDiems = await _repository.GetBangDiemsOfHocSinhAsync(maHs, nienKhoa, hocKy);
             var result = new List<object>();
             foreach (var b in bangDiems)
             {
@@ -119,7 +124,7 @@ namespace DoAn_WebHocVu_API.Application.Services
             return ServiceResult.Ok("Success", result);
         }
 
-        public async Task<ServiceResult> XuatBangDiemTongAsync(string maLop, string maGiaoVien, bool isHieuTruong)
+        public async Task<ServiceResult> XuatBangDiemTongAsync(string maLop, string maGiaoVien, bool isHieuTruong, string? nienKhoa = null, int? hocKy = null)
         {
             var lopHoc = await _repository.GetLopHocAsync(maLop);
             if (lopHoc == null) return ServiceResult.NotFound("Không tìm thấy lớp học này!");
@@ -134,7 +139,10 @@ namespace DoAn_WebHocVu_API.Application.Services
 
             var danhSachHocSinh = await _repository.GetDanhSachHocSinhByLopAsync(maLop);
             var maHocSinhs = danhSachHocSinh.Select(h => h.MaHs).ToList();
-            var danhSachDiem = await _repository.GetBangDiemsByHocSinhsAsync(maHocSinhs);
+
+            string nkLoc = nienKhoa ?? lopHoc.NienKhoa ?? "2025-2026";
+            int hkLoc = hocKy ?? 1;
+            var danhSachDiem = await _repository.GetBangDiemsByHocSinhsAsync(maHocSinhs, nkLoc, hkLoc);
             
             var tatCaMon = await _repository.GetAllMonHocAsync();
             var validSubjectCodes = GetClassSubjectCodes(maLop);
@@ -223,7 +231,7 @@ namespace DoAn_WebHocVu_API.Application.Services
             return ServiceResult.Ok("Dữ liệu đầy đủ hợp lệ!", ketQuaXuat);
         }
 
-        public async Task<ServiceResult> GuiThongBaoDiemAsync(string maLop, string maGiaoVien)
+        public async Task<ServiceResult> GuiThongBaoDiemAsync(string maLop, string maGiaoVien, string? nienKhoa = null, int? hocKy = null)
         {
             var lopHoc = await _repository.GetLopHocAsync(maLop);
             if (lopHoc == null) return ServiceResult.NotFound("Không tìm thấy lớp học này!");
@@ -235,7 +243,10 @@ namespace DoAn_WebHocVu_API.Application.Services
 
             var danhSachHocSinh = await _repository.GetDanhSachHocSinhByLopAsync(maLop);
             var maHocSinhs = danhSachHocSinh.Select(h => h.MaHs).ToList();
-            var danhSachDiem = await _repository.GetBangDiemsByHocSinhsAsync(maHocSinhs);
+
+            string nkLoc = nienKhoa ?? lopHoc.NienKhoa ?? "2025-2026";
+            int hkLoc = hocKy ?? 1;
+            var danhSachDiem = await _repository.GetBangDiemsByHocSinhsAsync(maHocSinhs, nkLoc, hkLoc);
             var tatCaMon = await _repository.GetAllMonHocAsync();
 
             var validSubjectCodes = GetClassSubjectCodes(maLop);

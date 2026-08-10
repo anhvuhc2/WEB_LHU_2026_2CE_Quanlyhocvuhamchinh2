@@ -15,9 +15,9 @@ public partial class LopHoc
 
     public virtual TaiKhoan? GvchuNhiemNavigation { get; set; }
 
-    public virtual ICollection<HocSinh> HocSinhs { get; set; } = new List<HocSinh>();
-
     public virtual ICollection<KeHoachLop> KeHoachLops { get; set; } = new List<KeHoachLop>();
+
+    public virtual ICollection<LichSuPhanLop> LichSuPhanLops { get; set; } = new List<LichSuPhanLop>();
 
     public virtual ICollection<PhanCongGiangDay> PhanCongGiangDays { get; set; } = new List<PhanCongGiangDay>();
 }

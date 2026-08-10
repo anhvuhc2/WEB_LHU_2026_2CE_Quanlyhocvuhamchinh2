@@ -188,9 +188,13 @@ namespace DoAn_WebHocVu_API.Controllers
                     }
                     else if (containsTT27Keywords)
                     {
-                        bool isT = System.Text.RegularExpressions.Regex.IsMatch(norm, @"\b(t|tốt|tot)\b") 
+                        bool isT = System.Text.RegularExpressions.Regex.IsMatch(norm, @"\b(t)\b") 
                             || norm.Contains("hoàn thành tốt") 
-                            || norm.Contains("hoan thanh tot");
+                            || norm.Contains("hoan thanh tot")
+                            || norm.Contains("loại tốt")
+                            || norm.Contains("loai tot")
+                            || norm.Contains("đánh giá tốt")
+                            || norm.Contains("danh gia tot");
 
                         bool isC = System.Text.RegularExpressions.Regex.IsMatch(norm, @"\b(c|chưa|chua)\b") 
                             || norm.Contains("chưa hoàn thành") 
@@ -200,7 +204,11 @@ namespace DoAn_WebHocVu_API.Controllers
                             || norm.Contains("hoàn thành") 
                             || norm.Contains("hoan thanh");
 
-                        if (isH && !isT && !isC)
+                        if (isH && isT)
+                        {
+                            phanHoiCuaHeThong = "Trợ lý ảo (dự phòng): Dạ thưa phụ huynh, đối với các môn đánh giá bằng nhận xét (không lấy điểm số như Đạo đức, Thể chất, Âm nhạc, Mỹ thuật...), việc xếp loại H (Hoàn thành) hay T (Hoàn thành tốt) dựa trên sự quan sát biểu hiện thái độ và năng lực thực tế hàng ngày của học sinh. Dù phụ huynh thấy các bé học tập tương đương nhau, nhưng bé đạt mức T phải có những biểu hiện vượt trội nổi bật, chủ động sáng tạo hoặc có đóng góp xuất sắc hơn trong các hoạt động của môn học. Thầy cô luôn đánh giá khách quan dựa trên cả quá trình rèn luyện trên lớp của các con. Chi tiết hướng dẫn tại [Tài Liệu Mở Rộng: /files/ThongTu27.pdf].";
+                        }
+                        else if (isH && !isT && !isC)
                         {
                             phanHoiCuaHeThong = "Trợ lý ảo (dự phòng): Dạ thưa phụ huynh, thầy cô rất trân trọng sự nỗ lực, ngoan ngoãn của bé trong học tập. Đánh giá H là bé hoàn thành mục tiêu bài học, còn muốn lên mức T thì bé phải có gì đó vượt trội hơn các bạn. Gia đình hãy tiếp tục khích lệ bé nhé! Chi tiết hướng dẫn tại [Tài Liệu Mở Rộng: /files/ThongTu27.pdf].";
                         }

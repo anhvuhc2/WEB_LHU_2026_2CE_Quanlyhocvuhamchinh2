@@ -11,15 +11,15 @@ namespace DoAn_WebHocVu_API.Application.Interfaces
         Task<LopHoc?> GetLopHocAsync(string maLop);
         Task<bool> CheckPhanCongGiangDayAsync(string maGiaoVien, string maLop, string maMon);
         Task<bool> CheckDaCoGvChuyenTrachAsync(string maLop, string maMon);
-        Task<BangDiem?> GetBangDiemAsync(string maHs, string maMon);
+        Task<BangDiem?> GetBangDiemAsync(string maHs, string maMon, string nienKhoa, int hocKy);
         void AddBangDiem(BangDiem bangDiem);
         void UpdateBangDiem(BangDiem bangDiem);
         
         Task<string?> GetTenMonByMaMonAsync(string maMon);
-        Task<List<BangDiem>> GetBangDiemsOfHocSinhAsync(string maHs);
+        Task<List<BangDiem>> GetBangDiemsOfHocSinhAsync(string maHs, string? nienKhoa, int? hocKy);
         
         Task<List<HocSinh>> GetDanhSachHocSinhByLopAsync(string maLop);
-        Task<List<BangDiem>> GetBangDiemsByHocSinhsAsync(List<string> maHocSinhs);
+        Task<List<BangDiem>> GetBangDiemsByHocSinhsAsync(List<string> maHocSinhs, string? nienKhoa = null, int? hocKy = null);
         Task<List<MonHoc>> GetAllMonHocAsync();
         
         void AddKeHoachLop(KeHoachLop keHoach);

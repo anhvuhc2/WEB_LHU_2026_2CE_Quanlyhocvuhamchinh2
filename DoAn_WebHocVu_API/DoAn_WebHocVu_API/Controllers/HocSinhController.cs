@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using DoAn_WebHocVu_API.Models;
+using System.Linq;
 
 namespace DoAn_WebHocVu_API.Controllers
 {
@@ -25,13 +26,28 @@ namespace DoAn_WebHocVu_API.Controllers
         [HttpGet("truy-xuat-ho-so/{maLop}")]
         public async Task<IActionResult> TruyXuatHoSoTheoLop(string maLop)
         {
-            // Lọc danh sách học sinh theo mã lớp được truyền lên từ giao diện
-            var danhSach = await _context.HocSinhs
-                .Where(hs => hs.MaLop == maLop)
+            // Lọc danh sách học sinh theo mã lớp thông qua bảng Lịch Sử Phân Lớp v2
+            var danhSach = await _context.LichSuPhanLops
+                .Include(l => l.MaHsNavigation)
+                .Where(l => l.MaLop == maLop)
+                .Select(l => new HocSinh
+                {
+                    MaHs = l.MaHsNavigation.MaHs,
+                    HoTen = l.MaHsNavigation.HoTen,
+                    NgaySinh = l.MaHsNavigation.NgaySinh,
+                    SdtphuHuynh = l.MaHsNavigation.SdtphuHuynh,
+                    TaiKhoanPhuHuynh = l.MaHsNavigation.TaiKhoanPhuHuynh,
+                    UuTienZalo = l.MaHsNavigation.UuTienZalo,
+                    Nu = l.MaHsNavigation.Nu,
+                    DanTocKhac = l.MaHsNavigation.DanTocKhac,
+                    TrangThai = l.MaHsNavigation.TrangThai,
+                    MaLop = l.MaLop // Trả về MaLop cho UI Next.js hiển thị
+                })
                 .ToListAsync();
 
             return Ok(danhSach);
         }
+
         /// <summary>
         /// API 2: Thêm mới học sinh (Chỉ GVCN lớp đó mới được thêm)
         /// </summary>
@@ -55,7 +71,7 @@ namespace DoAn_WebHocVu_API.Controllers
 
             // 4. Nếu đúng là GVCN -> Tiến hành thêm mới
             // Kiểm tra xem mã tài khoản phụ huynh nhập vào đã tồn tại trong bảng TaiKhoan chưa
-            if (!string.IsNullOrEmpty(hs.TaiKhoanPhuHuynh))
+            if (!string.IsNullOrWhiteSpace(hs.TaiKhoanPhuHuynh))
             {
                 var tkTonTai = await _context.TaiKhoans.AnyAsync(t => t.TenDangNhap == hs.TaiKhoanPhuHuynh);
                 if (!tkTonTai)
@@ -63,9 +79,20 @@ namespace DoAn_WebHocVu_API.Controllers
                     return BadRequest(new { message = $"Thất bại! Tài khoản phụ huynh '{hs.TaiKhoanPhuHuynh}' chưa tồn tại trong hệ thống. Vui lòng tạo tài khoản này trước." });
                 }
             }
+
+            // Thêm Học sinh gốc
             _context.HocSinhs.Add(hs);
+
+            // Thêm bản ghi Lịch Sử Phân Lớp v2
+            var lichSuMoi = new LichSuPhanLop {
+                MaHs = hs.MaHs,
+                MaLop = hs.MaLop,
+                NienKhoa = lopHoc.NienKhoa ?? "Unknown"
+            };
+            _context.LichSuPhanLops.Add(lichSuMoi);
+
             await _context.SaveChangesAsync();
-            return Ok(new { message = $"Thành công! Đã thêm học sinh {hs.HoTen} vào lớp {hs.MaLop}." });
+            return Ok(new { message = $"Thành công! Đã thêm học sinh {hs.HoTen} vào lớp {hs.MaLop} niên khóa {lopHoc.NienKhoa}." });
         }
 
         /// <summary>
@@ -76,27 +103,62 @@ namespace DoAn_WebHocVu_API.Controllers
         {
             var maGiaoVien = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
-            // Tìm học sinh gốc trong DB xem đang ở lớp nào trước khi sửa
+            // Tìm học sinh gốc trong DB
             var hocSinhGoc = await _context.HocSinhs.FirstOrDefaultAsync(h => h.MaHs == maHS);
             if (hocSinhGoc == null)
                 return NotFound("Không tìm thấy học sinh cần sửa.");
 
-            // Check quyền chủ nhiệm lớp hiện tại của học sinh
-            var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hocSinhGoc.MaLop);
+            // Tìm record phân lớp gần nhất (hoặc đang chọn)
+            var currentLopHistory = await _context.LichSuPhanLops
+                .Include(l => l.MaLopNavigation)
+                .OrderByDescending(l => l.NienKhoa)
+                .FirstOrDefaultAsync(l => l.MaHs == maHS);
+
+            var lopHoc = currentLopHistory?.MaLopNavigation;
+
             bool isHieuTruong = User.IsInRole("HieuTruong");
             if (lopHoc == null || (lopHoc.GvchuNhiem != maGiaoVien && !isHieuTruong))
             {
-                return StatusCode(403, new { message = $"Bạn không có quyền! Chỉ Hiệu trưởng hoặc GVCN của lớp {hocSinhGoc.MaLop} mới được phép sửa." });
+                return StatusCode(403, new { message = $"Bạn không có quyền sửa. Chỉ Hiệu trưởng hoặc GVCN mới có quyền." });
             }
 
-            // Tiến hành cập nhật thông tin
+            // Kiểm tra TK PH
+            if (!string.IsNullOrWhiteSpace(hsCapNhat.TaiKhoanPhuHuynh))
+            {
+                var tkTonTai = await _context.TaiKhoans.AnyAsync(t => t.TenDangNhap == hsCapNhat.TaiKhoanPhuHuynh);
+                if (!tkTonTai)
+                {
+                    return BadRequest(new { message = $"Thất bại! Tài khoản phụ huynh '{hsCapNhat.TaiKhoanPhuHuynh}' chưa tồn tại trong hệ thống." });
+                }
+            }
+
+            // Tiến hành cập nhật thông tin gốc
             hocSinhGoc.HoTen = hsCapNhat.HoTen;
             hocSinhGoc.NgaySinh = hsCapNhat.NgaySinh;
-            hocSinhGoc.MaLop = hsCapNhat.MaLop; // Có thể chuyển lớp nếu giáo viên chủ nhiệm thao tác
             hocSinhGoc.TaiKhoanPhuHuynh = hsCapNhat.TaiKhoanPhuHuynh;
-            hocSinhGoc.SdtPhuHuynh = hsCapNhat.SdtPhuHuynh;
+            hocSinhGoc.SdtphuHuynh = hsCapNhat.SdtphuHuynh;
             hocSinhGoc.UuTienZalo = hsCapNhat.UuTienZalo;
+            hocSinhGoc.Nu = hsCapNhat.Nu;
+            hocSinhGoc.DanTocKhac = hsCapNhat.DanTocKhac;
             hocSinhGoc.TrangThai = hsCapNhat.TrangThai;
+
+            // Có thể chuyển lớp nếu truyền lên thay đổi MaLop
+            if (!string.IsNullOrEmpty(hsCapNhat.MaLop) && currentLopHistory != null && hsCapNhat.MaLop != currentLopHistory.MaLop)
+            {
+                // Kiểm tra xem Lớp mới có cùng niên khóa với lớp cũ không, nếu CÙNG niên khóa thì đổi lớp, nếu tạo niên khóa mới thì phải Update NienKhoa
+                var lopMoi = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hsCapNhat.MaLop);
+                if (lopMoi != null)
+                {
+                    _context.LichSuPhanLops.Remove(currentLopHistory);
+
+                    var newHistory = new LichSuPhanLop {
+                        MaHs = hocSinhGoc.MaHs,
+                        MaLop = lopMoi.MaLop,
+                        NienKhoa = lopMoi.NienKhoa ?? "Unknown"
+                    };
+                    _context.LichSuPhanLops.Add(newHistory);
+                }
+            }
 
             await _context.SaveChangesAsync();
             return Ok(new { message = $"Thành công! Đã cập nhật thông tin học sinh {maHS}." });
@@ -108,7 +170,6 @@ namespace DoAn_WebHocVu_API.Controllers
         [HttpDelete("{maHS}")]
         public async Task<IActionResult> DeleteHocSinh(string maHS)
         {
-            // 1. Lấy mã giáo viên chắc chắn 100%
             var maGiaoVien = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
 
             if (string.IsNullOrEmpty(maGiaoVien))
@@ -116,22 +177,21 @@ namespace DoAn_WebHocVu_API.Controllers
                 return StatusCode(401, new { message = "Lỗi Token: Không thể lấy được mã giáo viên từ thẻ đăng nhập!" });
             }
 
-            // 2. Tìm học sinh
             var hocSinh = await _context.HocSinhs.FirstOrDefaultAsync(h => h.MaHs == maHS);
-            if (hocSinh == null)
-            {
-                return NotFound("Không tìm thấy học sinh cần xóa.");
-            }
+            if (hocSinh == null) return NotFound("Không tìm thấy học sinh cần xóa.");
 
-            // 3. Kiểm tra quyền chủ nhiệm lớp và quyền Hiệu trưởng
-            var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hocSinh.MaLop);
+            var currentHistory = await _context.LichSuPhanLops
+                .Include(l => l.MaLopNavigation)
+                .OrderByDescending(l => l.NienKhoa)
+                .FirstOrDefaultAsync(l => l.MaHs == maHS);
+
+            var lopHoc = currentHistory?.MaLopNavigation;
             bool isHieuTruong = User.IsInRole("HieuTruong");
             if (lopHoc == null || (lopHoc.GvchuNhiem?.Trim().ToUpper() != maGiaoVien.Trim().ToUpper() && !isHieuTruong))
             {
-                return StatusCode(403, new { message = $"Bạn không có quyền! Thao tác này chỉ dành cho Hiệu trưởng hoặc GVCN (hiện tại là '{lopHoc?.GvchuNhiem}')." });
+                return StatusCode(403, new { message = $"Bạn không có quyền! Thao tác này chỉ dành cho Hiệu trưởng hoặc GVCN." });
             }
 
-            // 4. THẦN THÁNH HÓA: Chuyển trạng thái để bảo toàn điểm số
             hocSinh.TrangThai = "Đã chuyển trường";
 
             await _context.SaveChangesAsync();
