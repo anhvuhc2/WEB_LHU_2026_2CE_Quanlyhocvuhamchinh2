@@ -41,6 +41,15 @@ namespace DoAn_WebHocVu_API.Controllers
                 return BadRequest(new { message = $"Lỗi: Mã lớp '{lopMoi.MaLop}' đã tồn tại!" });
             }
 
+            if (string.IsNullOrEmpty(lopMoi.NienKhoa))
+            {
+                var activeYear = await _context.DanhMucNienKhoas
+                    .Where(n => n.IsActive)
+                    .Select(n => n.MaNienKhoa)
+                    .FirstOrDefaultAsync() ?? "2025-2026";
+                lopMoi.NienKhoa = activeYear;
+            }
+
             _context.LopHocs.Add(lopMoi);
             await _context.SaveChangesAsync();
             return Ok(new { message = $"Thành công: Đã tạo lớp {lopMoi.TenLop} (Mã: {lopMoi.MaLop})." });
@@ -218,13 +227,31 @@ namespace DoAn_WebHocVu_API.Controllers
         [Authorize(Roles = "HieuTruong,GiaoVien")]
         public async Task<IActionResult> TongHopDiemDanhLop(string maLop)
         {
+            var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == maLop);
+            if (lopHoc == null) return NotFound(new { message = "Lớp không tồn tại" });
+
             var dsHocSinh = await _context.LichSuPhanLops
                  .Where(h => h.MaLop == maLop)
                  .Select(h => h.MaHs).ToListAsync();
 
-            var tatCaDiemDanh = await _context.DiemDanhs
-                 .Where(d => dsHocSinh.Contains(d.MaHs))
-                 .ToListAsync();
+            DateOnly? tuNgay = null;
+            DateOnly? denNgay = null;
+
+            string nienKhoa = lopHoc.NienKhoa ?? "2025-2026";
+            var parts = nienKhoa.Split('-');
+            if (parts.Length == 2 && int.TryParse(parts[0], out int namBatDau) && int.TryParse(parts[1], out int namKetThuc))
+            {
+                tuNgay = new DateOnly(namBatDau, 7, 1);
+                denNgay = new DateOnly(namKetThuc, 6, 30);
+            }
+
+            var queryDiemDanh = _context.DiemDanhs.Where(d => dsHocSinh.Contains(d.MaHs));
+            if (tuNgay.HasValue && denNgay.HasValue)
+            {
+                queryDiemDanh = queryDiemDanh.Where(d => d.NgayVang >= tuNgay.Value && d.NgayVang <= denNgay.Value);
+            }
+
+            var tatCaDiemDanh = await queryDiemDanh.ToListAsync();
 
             var ketQua = dsHocSinh.Select(maHs => {
                 var vangs = tatCaDiemDanh.Where(d => d.MaHs == maHs).ToList();

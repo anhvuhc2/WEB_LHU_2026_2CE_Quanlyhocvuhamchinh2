@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Tag, Button, Modal, Form, Input, DatePicker, message, Row, Col, Tabs, Space, Alert, Typography, Spin, Popconfirm, Badge, Radio, Select, Checkbox } from 'antd';
-import { UserOutlined, PlusOutlined, CalendarOutlined, CheckCircleOutlined, LockOutlined, DeleteOutlined, KeyOutlined, TeamOutlined, DesktopOutlined, BookOutlined, SearchOutlined } from '@ant-design/icons';
+import { UserOutlined, PlusOutlined, CalendarOutlined, CheckCircleOutlined, LockOutlined, DeleteOutlined, KeyOutlined, TeamOutlined, DesktopOutlined, BookOutlined, SearchOutlined, FileExcelOutlined } from '@ant-design/icons';
 import apiClient from '../../../services/apiClient';
 import dayjs from 'dayjs';
 
@@ -156,45 +156,61 @@ export default function ClassProfilePage() {
         'GiaoVien';
       const username = decoded?.sub || decoded["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] || '';
 
+      const savedWorkingYear = localStorage.getItem('working_academic_year') || '';
+
       // Tải niên khóa hiện tại
+      let currentActiveNK = '2025-2026';
       try {
         const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
         if (resNK.data?.activeAcademicYear) {
           setActiveAcademicYear(resNK.data.activeAcademicYear);
+          currentActiveNK = resNK.data.activeAcademicYear;
         }
       } catch (e) {
         console.warn("Could not fetch active academic year", e);
       }
 
+      const workingNK = savedWorkingYear || currentActiveNK;
+      setSelectedNienKhoa(workingNK);
+
       // Tải danh sách lớp trước tiên
       const resLop = await apiClient.get('/LopHoc/danh-sach');
       if (resLop.data && Array.isArray(resLop.data)) {
         setLopHocs(resLop.data);
-        if (resLop.data.length > 0) {
-          // Trích xuất danh sách Niên Khóa duy nhất (Sắp xếp giảm dần để hiển thị năm mới nhất)
+
+        // Tải danh sách niên khóa từ DB
+        try {
+          const resNKList = await apiClient.get('/QuanLyTruong/danh-sach-nien-khoa');
+          if (resNKList.data) {
+            setNienKhoaList(resNKList.data);
+          }
+        } catch (e) {
           const uniqueNK = Array.from(new Set(resLop.data.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
           setNienKhoaList(uniqueNK as string[]);
+        }
 
-          // Đối với Giáo viên, tự động chọn lớp họ chủ nhiệm (nếu có)
-          const gvcnClass = resLop.data.find(l => l.gvchuNhiem === username);
+        const classesInYear = resLop.data.filter((c: any) => c.nienKhoa === workingNK);
+
+        if (classesInYear.length > 0) {
+          // Đối với Giáo viên, tự động chọn lớp họ chủ nhiệm của năm học đang chọn (nếu có)
+          const gvcnClass = classesInYear.find(l => l.gvchuNhiem === username);
           if (gvcnClass) {
-            setSelectedNienKhoa(gvcnClass.nienKhoa);
             setSelectedClass(gvcnClass.maLop);
             fetchStudentsForClass(gvcnClass.maLop);
-          } else if (uniqueNK.length > 0) {
-            const firstNK = uniqueNK[0] as string;
-            setSelectedNienKhoa(firstNK);
-            const firstClassOfNK = resLop.data.find((x: any) => x.nienKhoa === firstNK);
-            if (firstClassOfNK) {
-              setSelectedClass(firstClassOfNK.maLop);
-              fetchStudentsForClass(firstClassOfNK.maLop);
-            }
+          } else {
+            // Chọn lớp đầu tiên trong năm đó
+            setSelectedClass(classesInYear[0].maLop);
+            fetchStudentsForClass(classesInYear[0].maLop);
           }
+        } else {
+          // Trống
+          setSelectedClass('');
+          setStudents([]);
         }
       }
 
       // Tải danh sách giáo viên
-      const resGv = await apiClient.get('/TaiKhoan/danh-sach-giao-vien');
+      const resGv = await apiClient.get('/TaiKhoan/danh-sach-giao-vien?nienKhoa=' + workingNK);
       if (resGv.data && Array.isArray(resGv.data)) {
         setTeachers(resGv.data);
       }
@@ -246,12 +262,13 @@ export default function ClassProfilePage() {
     setLoading(true);
 
     try {
-      const res = await apiClient.get(`/TaiKhoan/lich-day/${teacherId}`);
+      const res = await apiClient.get(`/TaiKhoan/lich-day/${teacherId}?nienKhoa=${selectedNienKhoa}`);
       if (res.data && Array.isArray(res.data)) {
 
-        // VÒNG BẢO VỆ FRONTEND: Loại bỏ rò rỉ dữ liệu lịch cũ bị cache hoặc trộn từ React State
+        // VÒNG BẢO VỆ FRONTEND: Loại bỏ rò rỉ dữ liệu lịch cũ bị cache hoặc trộn từ React State và lọc theo niên khóa đang chọn
         const strictFilter = res.data.filter(item =>
-          item.maGiaoVien && item.maGiaoVien.trim().toUpperCase() === teacherId.trim().toUpperCase()
+          item.maGiaoVien && item.maGiaoVien.trim().toUpperCase() === teacherId.trim().toUpperCase() &&
+          item.nienKhoa === selectedNienKhoa
         );
 
         setSchedules(strictFilter);
@@ -412,7 +429,7 @@ export default function ClassProfilePage() {
         maHs: values.maHs,
         hoTen: values.hoTen,
         ngaySinh: values.ngaySinh.format('YYYY-MM-DD'),
-        maLop: selectedClass,
+        maLop: values.maLop || selectedClass,
         sdtPhuHuynh: values.sdtPhuHuynh,
         uuTienZalo: values.uuTienZalo,
         nu: values.nu || false,
@@ -517,6 +534,43 @@ export default function ClassProfilePage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // 12.5. Xuất danh sách học sinh ra file CSV (Excel tiếng Việt hỗ trợ Unicode BOM UTF-16LE)
+  const handleExportStudentsExcel = () => {
+    if (!students || students.length === 0) {
+      message.warning('Không có dữ liệu học sinh để xuất!');
+      return;
+    }
+    const headers = ['Mã Học Sinh', 'Họ và Tên', 'Giới tính Nữ', 'Dân tộc khác', 'Ngày Sinh', 'SĐT Phụ Huynh', 'Zalo Ưu Tiên', 'Trạng Thái'];
+    const rows = students.map(s => [
+      s.maHs,
+      s.hoTen || '',
+      s.nu ? 'x' : '',
+      s.danTocKhac ? 'x' : '',
+      s.ngaySinh ? dayjs(s.ngaySinh).format('DD/MM/YYYY') : '',
+      s.sdtPhuHuynh || '',
+      s.uuTienZalo ? 'Có' : 'Không',
+      s.trangThai
+    ]);
+
+    const content = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\r\n');
+    const buffer = new ArrayBuffer(2 + content.length * 2);
+    const view = new DataView(buffer);
+    view.setUint16(0, 0xFEFF, true); // UTF-16LE BOM
+    for (let i = 0; i < content.length; i++) {
+      view.setUint16(2 + i * 2, content.charCodeAt(i), true);
+    }
+
+    const blob = new Blob([buffer], { type: 'text/csv;charset=utf-16le;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Danh_sach_hoc_sinh_lop_${selectedClass || 'lop'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    message.success('Đã xuất và tải file Excel danh sách học sinh!');
   };
 
   // 12. Điểm danh (GVCN)
@@ -628,7 +682,8 @@ export default function ClassProfilePage() {
                   danTocKhac: record.danTocKhac,
                   uuTienZalo: record.uuTienZalo,
                   trangThai: record.trangThai,
-                  taiKhoanPhuHuynh: record.taiKhoanPhuHuynh
+                  taiKhoanPhuHuynh: record.taiKhoanPhuHuynh,
+                  maLop: record.maLop || selectedClass
                 });
                 setIsStudentModalOpen(true);
               }}
@@ -662,7 +717,7 @@ export default function ClassProfilePage() {
       key: 'management',
       render: (_: any, record: any) => (
         <Space>
-          <Button size="small" icon={<KeyOutlined />} onClick={() => handleResetTeacherPassword(record.tenDangNhap)}>
+          <Button size="small" icon={<KeyOutlined />} disabled={isLocked} onClick={() => handleResetTeacherPassword(record.tenDangNhap)}>
             Reset Pass
           </Button>
           <Popconfirm
@@ -672,8 +727,9 @@ export default function ClassProfilePage() {
             okText="Xóa bỏ"
             cancelText="Hủy"
             okButtonProps={{ danger: true }}
+            disabled={isLocked}
           >
-            <Button size="small" danger icon={<DeleteOutlined />}>Xóa tài khoản</Button>
+            <Button size="small" danger icon={<DeleteOutlined />} disabled={isLocked}>Xóa tài khoản</Button>
           </Popconfirm>
         </Space>
       )
@@ -747,27 +803,10 @@ export default function ClassProfilePage() {
                   <Col>
                     <Space>
                       <Text className="font-semibold text-slate-800">Năm Học:</Text>
-                      <Select 
-                        value={selectedNienKhoa || undefined} 
-                        onChange={(val) => {
-                          setSelectedNienKhoa(val);
-                          const classesInYear = lopHocs.filter((c: any) => c.nienKhoa === val);
-                          if (classesInYear.length > 0) {
-                             setSelectedClass(classesInYear[0].maLop);
-                             fetchStudentsForClass(classesInYear[0].maLop);
-                          } else {
-                             setSelectedClass('');
-                             setStudents([]);
-                          }
-                        }} 
-                        options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
-                        className="font-bold min-w-[140px]"
-                      />
-                      {role === 'HieuTruong' && selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '' && (
-                        <Popconfirm title={`Chốt niên khóa ${selectedNienKhoa} làm năm hiện hành (Mở khóa sửa đổi)?`} onConfirm={() => handleChotNienKhoa(selectedNienKhoa)}>
-                          <Button type="primary" danger icon={<LockOutlined />}>Chốt Năm Này</Button>
-                        </Popconfirm>
-                      )}
+                      <Tag color="blue" className="font-bold text-sm px-3 py-1 m-0 border-blue-200">
+                        {selectedNienKhoa}
+                      </Tag>
+
 
                       <Text className="font-semibold ml-4">Chọn Lớp ({selectedNienKhoa}):</Text>
                       <div className="flex gap-2 border-l-2 border-indigo-100 pl-4">
@@ -810,6 +849,14 @@ export default function ClassProfilePage() {
                         onClick={handleOpenAttendance}
                       >
                         Mở Điểm Danh Lớp
+                      </Button>
+                      <Button
+                        type="default"
+                        icon={<FileExcelOutlined />}
+                        className="bg-emerald-50 text-emerald-600 border-emerald-200"
+                        onClick={handleExportStudentsExcel}
+                      >
+                        Xuất Excel Danh Sách
                       </Button>
                     </Space>
                   </Col>
@@ -896,10 +943,10 @@ export default function ClassProfilePage() {
                   {role === 'HieuTruong' && (
                     <Col>
                       <Space>
-                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAssignSubjectModalOpen(true)}>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAssignSubjectModalOpen(true)} disabled={isLocked}>
                           Xếp Phân Công Mới
                         </Button>
-                        <Button type="dashed" icon={<PlusOutlined />} onClick={() => setIsAssignHomeroomModalOpen(true)}>
+                        <Button type="dashed" icon={<PlusOutlined />} onClick={() => setIsAssignHomeroomModalOpen(true)} disabled={isLocked}>
                           Phân Công GVCN
                         </Button>
                       </Space>
@@ -933,10 +980,10 @@ export default function ClassProfilePage() {
                     <Space>
                       {role === 'HieuTruong' && (
                         <>
-                          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsTeacherAccModalOpen(true)}>
+                          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsTeacherAccModalOpen(true)} disabled={isLocked}>
                             Cấp Tài Khoản Giáo Viên
                           </Button>
-                          <Button type="dashed" icon={<PlusOutlined />} onClick={() => setIsClassModalOpen(true)}>
+                          <Button type="dashed" icon={<PlusOutlined />} onClick={() => setIsClassModalOpen(true)} disabled={isLocked}>
                             Thêm Lớp Mới
                           </Button>
                         </>
@@ -1168,12 +1215,25 @@ export default function ClassProfilePage() {
           </Form.Item>
 
           {editingStudent && (
-            <Form.Item name="trangThai" label="Trạng thái Học tập">
-              <Radio.Group>
-                <Radio value="Đang học">Đang học</Radio>
-                <Radio value="Đã chuyển trường">Đã chuyển trường</Radio>
-              </Radio.Group>
-            </Form.Item>
+            <>
+              <Form.Item name="maLop" label="Lớp Học Hiện Tại (Chuyển lớp)" rules={[{ required: true, message: 'Nhập lớp học!' }]}>
+                <Select placeholder="Chọn lớp để chuyển học sinh sang...">
+                  {lopHocs
+                    .filter((c: any) => c.nienKhoa === selectedNienKhoa)
+                    .map((classItem: any) => (
+                      <Select.Option key={classItem.maLop} value={classItem.maLop}>
+                        Lớp {classItem.tenLop} ({classItem.maLop})
+                      </Select.Option>
+                    ))}
+                </Select>
+              </Form.Item>
+              <Form.Item name="trangThai" label="Trạng thái Học tập">
+                <Radio.Group>
+                  <Radio value="Đang học">Đang học</Radio>
+                  <Radio value="Đã chuyển trường">Đã chuyển trường</Radio>
+                </Radio.Group>
+              </Form.Item>
+            </>
           )}
 
           <Form.Item className="mb-0 flex justify-end">

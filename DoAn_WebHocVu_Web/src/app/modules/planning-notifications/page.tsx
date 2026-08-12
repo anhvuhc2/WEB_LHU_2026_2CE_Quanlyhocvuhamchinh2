@@ -96,9 +96,14 @@ export default function PlanningNotificationsPage() {
     setLoading(true);
     try {
       let listClasses = [];
+      const savedWorkingYear = localStorage.getItem('working_academic_year') || '2025-2026';
+
       if (role === 'GiaoVien' || role === 'HieuTruong') {
         const classRes = await apiClient.get('/LopHoc/danh-sach');
-        listClasses = classRes.data || [];
+        const rawClasses = classRes.data || [];
+
+        // Lọc danh sách lớp học theo niên khóa làm việc toàn cục
+        listClasses = rawClasses.filter((c: any) => c.nienKhoa === savedWorkingYear);
         
         if (role === 'GiaoVien') {
           // Lọc danh sách lớp học dạy thực tế của giáo viên dựa trên bảng phân công lich-day

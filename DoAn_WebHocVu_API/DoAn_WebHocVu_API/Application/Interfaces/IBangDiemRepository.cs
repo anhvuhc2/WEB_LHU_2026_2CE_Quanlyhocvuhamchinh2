@@ -9,6 +9,7 @@ namespace DoAn_WebHocVu_API.Application.Interfaces
         Task<MonHoc?> GetMonHocAsync(string maMon);
         Task<HocSinh?> GetHocSinhAsync(string maHs);
         Task<LopHoc?> GetLopHocAsync(string maLop);
+        Task<string?> GetMaLopByHocSinhAndNienKhoaAsync(string maHs, string nienKhoa);
         Task<bool> CheckPhanCongGiangDayAsync(string maGiaoVien, string maLop, string maMon);
         Task<bool> CheckDaCoGvChuyenTrachAsync(string maLop, string maMon);
         Task<BangDiem?> GetBangDiemAsync(string maHs, string maMon, string nienKhoa, int hocKy);

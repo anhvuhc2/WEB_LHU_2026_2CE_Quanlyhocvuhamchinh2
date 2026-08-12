@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Tabs, Card, Table, Typography, Button, Space, Tag, Modal, Form, Input, Select, InputNumber, message, Row, Col, Spin, Alert } from 'antd';
-import { AppstoreOutlined, TeamOutlined, UserOutlined, NotificationOutlined, BarChartOutlined, PlusOutlined, LockOutlined, ReloadOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, TeamOutlined, UserOutlined, NotificationOutlined, BarChartOutlined, PlusOutlined, LockOutlined, ReloadOutlined, FileExcelOutlined } from '@ant-design/icons';
 import apiClient from '../../../services/apiClient';
 
 const { Title, Text } = Typography;
@@ -19,6 +19,7 @@ export default function AdminDashboardPage() {
   const [selectedClassForGrades, setSelectedClassForGrades] = useState<string>('');
   const [gradeData, setGradeData] = useState<any[]>([]);
   const [loadingGrades, setLoadingGrades] = useState(false);
+  const [selectedHocKyForGrades, setSelectedHocKyForGrades] = useState<number>(1);
   
   // States cho Tài khoản
   const [parentAccounts, setParentAccounts] = useState<any[]>([]);
@@ -45,16 +46,50 @@ export default function AdminDashboardPage() {
 
   // Nien Khoa Lock States
   const [activeAcademicYear, setActiveAcademicYear] = useState<string>('');
+  const [schoolActiveYear, setSchoolActiveYear] = useState<string>('');
   const [nienKhoaList, setNienKhoaList] = useState<string[]>([]);
   const [selectedNienKhoaToLock, setSelectedNienKhoaToLock] = useState<string>('');
+  const [newYearInput, setNewYearInput] = useState<string>('');
+  const [isAddingYear, setIsAddingYear] = useState<boolean>(false);
+
+  const isLocked = activeAcademicYear !== schoolActiveYear && activeAcademicYear !== '';
+
+  const handleAddNewYear = async () => {
+    if (!newYearInput || !newYearInput.trim()) {
+      message.error("Vui lòng nhập niên khóa mới");
+      return;
+    }
+    const cleanInput = newYearInput.trim();
+    setIsAddingYear(true);
+    try {
+      const res = await apiClient.post('/QuanLyTruong/them-nien-khoa', JSON.stringify(cleanInput), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      message.success(res.data?.message || `Đã thêm niên khóa ${cleanInput} thành công!`);
+      setNewYearInput('');
+      
+      // Reload danh sách niên khóa
+      const resNKList = await apiClient.get('/QuanLyTruong/danh-sach-nien-khoa');
+      if (resNKList.data) {
+        setNienKhoaList(resNKList.data);
+      }
+    } catch (err: any) {
+      message.error(err.response?.data?.message || "Có lỗi xảy ra khi thêm niên khóa mới");
+    } finally {
+      setIsAddingYear(false);
+    }
+  };
 
   const handleChotNienKhoa = async (nienKhoaToLock: string) => {
     try {
-      const res = await apiClient.post('/QuanLyTruong/chot-nien-khoa', { maNienKhoa: nienKhoaToLock });
+      const res = await apiClient.post('/QuanLyTruong/chot-nien-khoa', JSON.stringify(nienKhoaToLock), {
+        headers: { 'Content-Type': 'application/json' }
+      });
       message.success(res.data.message || `Đã chốt năm học ${nienKhoaToLock} làm năm hiện hành!`);
-      setActiveAcademicYear(nienKhoaToLock);
+      setSchoolActiveYear(nienKhoaToLock);
+      localStorage.setItem('working_academic_year', nienKhoaToLock);
       setSelectedNienKhoaToLock('');
-      fetchDashboardData();
+      window.location.reload();
     } catch (err: any) {
       message.error(err.response?.data?.message || 'Có lỗi xảy ra khi chốt niên khóa!');
     }
@@ -69,7 +104,7 @@ export default function AdminDashboardPage() {
   }, [progressType]);
 
   const fetchTienDoData = async (nk?: string) => {
-    const yearToFetch = nk || activeAcademicYear;
+    const yearToFetch = nk || schoolActiveYear;
     if (!yearToFetch) return;
     try {
       const resTienDo = await apiClient.get(`/KeHoach/tien-do-toan-truong?loai=${progressType}&nienKhoa=${yearToFetch}`);
@@ -83,20 +118,42 @@ export default function AdminDashboardPage() {
     setLoading(true);
     try {
       let currentNK = '';
+      const savedWorkingYear = localStorage.getItem('working_academic_year');
+
       try {
         const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
         if (resNK.data?.activeAcademicYear) {
-          setActiveAcademicYear(resNK.data.activeAcademicYear);
-          currentNK = resNK.data.activeAcademicYear;
+          setSchoolActiveYear(resNK.data.activeAcademicYear);
+          if (!savedWorkingYear) {
+            localStorage.setItem('working_academic_year', resNK.data.activeAcademicYear);
+            setActiveAcademicYear(resNK.data.activeAcademicYear);
+            currentNK = resNK.data.activeAcademicYear;
+          }
         }
       } catch (e) {}
+
+      if (savedWorkingYear) {
+        setActiveAcademicYear(savedWorkingYear);
+        currentNK = savedWorkingYear;
+      }
 
       // 1. Tải danh sách lớp
       const resLop = await apiClient.get('/LopHoc/danh-sach');
       if (resLop.data) {
         setLopHocs(resLop.data);
-        const uniqueNK = Array.from(new Set(resLop.data.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
-        setNienKhoaList(uniqueNK as string[]);
+      }
+
+      // Tải danh sách niên khóa từ DB
+      try {
+        const resNKList = await apiClient.get('/QuanLyTruong/danh-sach-nien-khoa');
+        if (resNKList.data) {
+          setNienKhoaList(resNKList.data);
+        }
+      } catch (e) {
+        if (resLop.data) {
+          const uniqueNK = Array.from(new Set(resLop.data.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
+          setNienKhoaList(uniqueNK as string[]);
+        }
       }
 
       // 2. Tải danh sách giáo viên
@@ -120,7 +177,11 @@ export default function AdminDashboardPage() {
   // --- Handlers ---
   const handleAddClass = async (values: any) => {
     try {
-      await apiClient.post('/LopHoc/them-moi', values);
+      const payload = {
+        ...values,
+        nienKhoa: schoolActiveYear
+      };
+      await apiClient.post('/LopHoc/them-moi', payload);
       message.success('Đã thêm cấu trúc lớp học mới thành công!');
       setIsAddClassModalOpen(false);
       classForm.resetFields();
@@ -202,7 +263,7 @@ export default function AdminDashboardPage() {
         thu: values.thu,
         buoi: values.buoi,
         tiet: values.tiet?.toString() || '',
-        nienKhoa: activeAcademicYear
+        nienKhoa: schoolActiveYear
       };
       const res = await apiClient.post('/QuanLyTruong/phan-cong-bo-mon', payload);
       message.success(res.data?.message || 'Đã phân công bộ môn!');
@@ -214,11 +275,11 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const fetchGradesForClass = async (classId: string) => {
+  const fetchGradesForClass = async (classId: string, hocKy: number = selectedHocKyForGrades) => {
     if (!classId) return;
     setLoadingGrades(true);
     try {
-      const res = await apiClient.get(`/BangDiem/xuat-bang-diem-tong/${classId}`);
+      const res = await apiClient.get(`/BangDiem/xuat-bang-diem-tong/${classId}?nienKhoa=${activeAcademicYear}&hocKy=${hocKy}`);
       if (res.data?.data && Array.isArray(res.data.data)) {
         setGradeData(res.data.data);
       } else if (res.data && Array.isArray(res.data)) {
@@ -232,6 +293,61 @@ export default function AdminDashboardPage() {
     } finally {
       setLoadingGrades(false);
     }
+  };
+
+  const exportGradesToExcel = (data: any[], classNameVal: string, semesterNameVal: string) => {
+    if (!data || data.length === 0) {
+      message.warning('Không có dữ liệu điểm để xuất!');
+      return;
+    }
+    const subjects = data[0].chiTietDiem || [];
+    const headers = ['Mã Học Sinh', 'Tên Học Sinh', ...subjects.map((sub: any) => sub.tenMon), 'Danh hiệu thi đua'];
+    
+    const rows = data.map((hs: any) => {
+      const row = [
+        hs.maHs,
+        hs.hoTen || ''
+      ];
+      subjects.forEach((sub: any) => {
+        const mon = hs.chiTietDiem?.find((m: any) => m.tenMon === sub.tenMon);
+        let cellVal = '';
+        if (mon) {
+          if (mon.diemThi !== null && mon.xepLoai) {
+            cellVal = `${mon.diemThi} (${mon.xepLoai})`;
+          } else if (mon.diemThi !== null) {
+            cellVal = `${mon.diemThi}`;
+          } else if (mon.xepLoai) {
+            cellVal = mon.xepLoai;
+          }
+        }
+        row.push(cellVal);
+      });
+      row.push(hs.khenThuong || '');
+      return row;
+    });
+
+    const content = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\r\n');
+    const buffer = new ArrayBuffer(2 + content.length * 2);
+    const view = new DataView(buffer);
+    view.setUint16(0, 0xFEFF, true); // UTF-16LE BOM
+    for (let i = 0; i < content.length; i++) {
+      view.setUint16(2 + i * 2, content.charCodeAt(i), true);
+    }
+
+    const blob = new Blob([buffer], { type: 'text/csv;charset=utf-16le;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    
+    // Find class friendly name
+    const foundClass = lopHocs.find(c => c.maLop === classNameVal);
+    const classLabel = foundClass ? foundClass.tenLop : classNameVal;
+
+    link.setAttribute('download', `Bang_diem_lop_${String(classLabel).replace(/\s+/g, '_')}_Ky_${semesterNameVal.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    message.success('Đã tải xuống file Excel bảng điểm!');
   };
 
   const fetchParentsForClass = async (classId: string) => {
@@ -316,6 +432,7 @@ export default function AdminDashboardPage() {
           <Button 
             size="small" 
             type="primary"
+            disabled={isLocked}
             onClick={() => {
               setAssignTargetTeacher(record.tenDangNhap);
               setIsAssignModalOpen(true);
@@ -325,6 +442,7 @@ export default function AdminDashboardPage() {
           <Button 
             size="small" 
             icon={<LockOutlined />} 
+            disabled={isLocked}
             onClick={() => {
               setCurrentSelectedUsername(record.tenDangNhap);
               setIsResetPassModalOpen(true);
@@ -334,6 +452,7 @@ export default function AdminDashboardPage() {
           <Button 
             size="small" 
             danger 
+            disabled={isLocked}
             onClick={() => handleDeleteAccount(record.tenDangNhap)}>
             Hủy Tài khoản
           </Button>
@@ -410,8 +529,8 @@ export default function AdminDashboardPage() {
           <div className="flex flex-col md:flex-row items-start md:items-center gap-6 bg-slate-50 p-6 rounded-xl border border-slate-200">
             <div>
               <div className="text-sm font-semibold text-slate-500 mb-2">Năm học Hiện hành đang Mở Khóa:</div>
-              {activeAcademicYear ? (
-                <Tag color="green" className="text-2xl px-4 py-2 font-bold m-0 border-green-300">{activeAcademicYear}</Tag>
+              {schoolActiveYear ? (
+                <Tag color="green" className="text-2xl px-4 py-2 font-bold m-0 border-green-300">{schoolActiveYear}</Tag>
               ) : (
                 <Spin />
               )}
@@ -433,7 +552,7 @@ export default function AdminDashboardPage() {
                   type="primary" 
                   danger 
                   icon={<LockOutlined />} 
-                  disabled={!selectedNienKhoaToLock || selectedNienKhoaToLock === activeAcademicYear}
+                  disabled={!selectedNienKhoaToLock || selectedNienKhoaToLock === schoolActiveYear}
                   onClick={() => {
                     Modal.confirm({
                       title: 'Xác nhận Kích hoạt Ổ Khóa Hệ thống',
@@ -449,6 +568,28 @@ export default function AdminDashboardPage() {
                 </Button>
               </Space>
             </div>
+            <div className="hidden md:block w-px h-16 bg-slate-300"></div>
+            <div>
+              <div className="text-sm font-semibold text-slate-500 mb-2">Tạo Niên khóa mới:</div>
+              <Space size="middle">
+                <Input 
+                  size="large"
+                  style={{ width: 180 }}
+                  placeholder="Ví dụ: 2026-2027"
+                  value={newYearInput}
+                  onChange={(e) => setNewYearInput(e.target.value)}
+                />
+                <Button 
+                  size="large"
+                  type="default"
+                  icon={<PlusOutlined />}
+                  loading={isAddingYear}
+                  onClick={handleAddNewYear}
+                >
+                  Khởi Tạo Niên Khóa
+                </Button>
+              </Space>
+            </div>
           </div>
         </Card>
       ),
@@ -457,7 +598,7 @@ export default function AdminDashboardPage() {
       key: '1',
       label: <span><AppstoreOutlined />Quản lý Lớp Học</span>,
       children: (
-        <Card title="Giao diện theo dõi cấu trúc Lớp" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddClassModalOpen(true)}>Thêm Lớp Mới</Button>}>
+        <Card title="Giao diện theo dõi cấu trúc Lớp" extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddClassModalOpen(true)} disabled={isLocked}>Thêm Lớp Mới</Button>}>
           <Table dataSource={lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear)} columns={lopHocColumns} rowKey="maLop" loading={loading} />
         </Card>
       ),
@@ -466,7 +607,7 @@ export default function AdminDashboardPage() {
       key: '2',
       label: <span><TeamOutlined />Quản lý Trường & Nhân Sự</span>,
       children: (
-        <Card title="Quản trị ban Nghề & Giáo Viên" extra={<Space><Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddTeacherModalOpen(true)}>Thêm Giáo viên Mới</Button><Button icon={<ReloadOutlined />} onClick={fetchDashboardData}>Làm mới</Button></Space>}>
+        <Card title="Quản trị ban Nghề & Giáo Viên" extra={<Space><Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddTeacherModalOpen(true)} disabled={isLocked}>Thêm Giáo viên Mới</Button><Button icon={<ReloadOutlined />} onClick={fetchDashboardData}>Làm mới</Button></Space>}>
            <Alert message="Phân công chuyên môn" description="Việc xếp thời khóa biểu và phân công chủ nhiệm được ủy quyền tại Module 1 (Hồ sơ phân công) để chặn trùng lịch." type="info" showIcon className="mb-4" />
           <Table dataSource={giaoViens} columns={giaoVienColumns} rowKey="tenDangNhap" loading={loading} />
         </Card>
@@ -537,21 +678,68 @@ export default function AdminDashboardPage() {
 
         return (
           <Card title="Theo Dõi Tổng Kết Điểm Đánh Giá Năng Lực (Thông tư 27)">
-            <div className="flex items-center gap-3 mb-4">
-              <span className="font-semibold text-slate-700">Chọn lớp cần xem:</span>
-              <div className="flex flex-wrap gap-2">
-                {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => (
-                  <Button 
-                    key={c.maLop} 
-                    type={selectedClassForGrades === c.maLop ? 'primary' : 'default'}
-                    onClick={() => {
-                      setSelectedClassForGrades(c.maLop);
-                      fetchGradesForClass(c.maLop);
-                    }}>
-                    Lớp {c.tenLop}
-                  </Button>
-                ))}
+            <div className="flex flex-wrap items-center gap-6 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-700">Chọn học kỳ / Phân kỳ:</span>
+                <Select
+                  value={selectedHocKyForGrades}
+                  onChange={(val) => {
+                    setSelectedHocKyForGrades(val);
+                    if (selectedClassForGrades) {
+                      fetchGradesForClass(selectedClassForGrades, val);
+                    }
+                  }}
+                  style={{ width: 180 }}
+                  className="font-bold border-indigo-400"
+                  options={[
+                    { value: 1, label: 'Giữa Học kỳ 1' },
+                    { value: 2, label: 'Cuối Học kỳ 1' },
+                    { value: 3, label: 'Giữa Học kỳ 2' },
+                    { value: 4, label: 'Cuối Học kỳ 2' }
+                  ]}
+                />
               </div>
+
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-slate-700">Chọn lớp cần xem:</span>
+                <div className="flex flex-wrap gap-2">
+                  {lopHocs.filter((c: any) => c.nienKhoa === activeAcademicYear).map(c => (
+                    <Button 
+                      key={c.maLop} 
+                      type={selectedClassForGrades === c.maLop ? 'primary' : 'default'}
+                      onClick={() => {
+                        setSelectedClassForGrades(c.maLop);
+                        fetchGradesForClass(c.maLop, selectedHocKyForGrades);
+                      }}>
+                      Lớp {c.tenLop}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              {selectedClassForGrades && gradeData.length > 0 && (
+                <div className="ml-auto">
+                  <Button 
+                    type="primary" 
+                    icon={<FileExcelOutlined />} 
+                    className="bg-emerald-600 border-emerald-600 hover:bg-emerald-700 font-semibold"
+                    onClick={() => {
+                      const getSemesterName = (hk: number) => {
+                        switch (hk) {
+                          case 1: return 'Giữa HK1';
+                          case 2: return 'Cuối HK1';
+                          case 3: return 'Giữa HK2';
+                          case 4: return 'Cuối HK2';
+                          default: return 'HK' + hk;
+                        }
+                      };
+                      exportGradesToExcel(gradeData, selectedClassForGrades, getSemesterName(selectedHocKyForGrades));
+                    }}
+                  >
+                    Xuất Excel Bảng Điểm
+                  </Button>
+                </div>
+              )}
             </div>
 
             {selectedClassForGrades && gradeData.length > 0 && (

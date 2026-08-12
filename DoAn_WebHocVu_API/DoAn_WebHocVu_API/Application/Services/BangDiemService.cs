@@ -33,9 +33,12 @@ namespace DoAn_WebHocVu_API.Application.Services
             string mndTrim = maGiaoVien?.Trim().ToUpper() ?? "";
             string mmTrim = model.MaMon.Trim().ToUpper();
 
-            var lopHoc = await _repository.GetLopHocAsync(hocSinh.MaLop);
+            string targetNienKhoa = model.NienKhoa ?? "2025-2026";
+            string maLopHienTai = await _repository.GetMaLopByHocSinhAndNienKhoaAsync(model.MaHS, targetNienKhoa) ?? hocSinh.MaLop;
+
+            var lopHoc = await _repository.GetLopHocAsync(maLopHienTai);
             bool laGVCN = (lopHoc != null && lopHoc.GvchuNhiem?.Trim().ToUpper() == mndTrim);
-            bool laGVBM = await _repository.CheckPhanCongGiangDayAsync(mndTrim, hocSinh.MaLop, mmTrim);
+            bool laGVBM = await _repository.CheckPhanCongGiangDayAsync(mndTrim, maLopHienTai, mmTrim);
 
             if (laGVBM)
             {
@@ -43,7 +46,7 @@ namespace DoAn_WebHocVu_API.Application.Services
             }
             else if (laGVCN)
             {
-                bool daCoGvChuyenTrach = await _repository.CheckDaCoGvChuyenTrachAsync(hocSinh.MaLop, mmTrim);
+                bool daCoGvChuyenTrach = await _repository.CheckDaCoGvChuyenTrachAsync(maLopHienTai, mmTrim);
                 if (daCoGvChuyenTrach)
                 {
                     return ServiceResult.Forbidden($"Từ chối truy cập: Bạn là Chủ nhiệm, nhưng môn {monHoc.TenMon} của lớp này đã được giao phó riêng cho Giáo viên bộ môn. Bạn không được nhập đè!");
@@ -57,7 +60,7 @@ namespace DoAn_WebHocVu_API.Application.Services
             }
 
             var cacMonNhanXet = new List<string> { "TNXH", "GDTC", "HDTN", "HĐTN", "DD", "AN", "MT" };
-            bool hocKhoi12 = hocSinh.MaLop.Contains("1") || hocSinh.MaLop.Contains("2");
+            bool hocKhoi12 = maLopHienTai.Contains("1") || maLopHienTai.Contains("2");
             if (hocKhoi12) cacMonNhanXet.Add("ANH");
 
             if (cacMonNhanXet.Contains(model.MaMon.ToUpper()))

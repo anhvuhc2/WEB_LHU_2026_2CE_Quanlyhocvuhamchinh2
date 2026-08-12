@@ -81,9 +81,32 @@ namespace DoAn_WebHocVu_API.Infrastructure.Repositories
             return await query.ToListAsync();
         }
 
+        public async Task<string?> GetMaLopByHocSinhAndNienKhoaAsync(string maHs, string nienKhoa)
+        {
+            var history = await _context.LichSuPhanLops
+                .FirstOrDefaultAsync(l => l.MaHs == maHs && l.NienKhoa == nienKhoa);
+            return history?.MaLop;
+        }
+
         public async Task<List<HocSinh>> GetDanhSachHocSinhByLopAsync(string maLop)
         {
-            return await _context.HocSinhs.Where(h => h.MaLop == maLop).ToListAsync();
+            return await _context.LichSuPhanLops
+                .Include(l => l.MaHsNavigation)
+                .Where(l => l.MaLop == maLop)
+                .Select(l => new HocSinh
+                {
+                    MaHs = l.MaHsNavigation.MaHs,
+                    HoTen = l.MaHsNavigation.HoTen,
+                    NgaySinh = l.MaHsNavigation.NgaySinh,
+                    SdtphuHuynh = l.MaHsNavigation.SdtphuHuynh,
+                    TaiKhoanPhuHuynh = l.MaHsNavigation.TaiKhoanPhuHuynh,
+                    UuTienZalo = l.MaHsNavigation.UuTienZalo,
+                    Nu = l.MaHsNavigation.Nu,
+                    DanTocKhac = l.MaHsNavigation.DanTocKhac,
+                    TrangThai = l.MaHsNavigation.TrangThai,
+                    MaLop = l.MaLop
+                })
+                .ToListAsync();
         }
 
         public async Task<List<BangDiem>> GetBangDiemsByHocSinhsAsync(List<string> maHocSinhs, string? nienKhoa = null, int? hocKy = null)

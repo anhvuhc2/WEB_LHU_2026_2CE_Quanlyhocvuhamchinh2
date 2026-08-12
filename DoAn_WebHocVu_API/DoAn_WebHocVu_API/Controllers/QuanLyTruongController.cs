@@ -30,6 +30,17 @@ namespace DoAn_WebHocVu_API.Controllers
             return Ok(new { activeAcademicYear = "2025-2026" }); // Fallback an toàn
         }
 
+        [AllowAnonymous]
+        [HttpGet("danh-sach-nien-khoa")]
+        public async Task<IActionResult> GetDanhSachNienKhoa()
+        {
+            var list = await _context.DanhMucNienKhoas
+                .OrderByDescending(n => n.MaNienKhoa)
+                .Select(n => n.MaNienKhoa)
+                .ToListAsync();
+            return Ok(list);
+        }
+
         [Authorize(Roles = "HieuTruong")]
         [HttpPost("chot-nien-khoa")]
         public async Task<IActionResult> SwitchActiveYear([FromBody] string targetYear)
@@ -44,6 +55,47 @@ namespace DoAn_WebHocVu_API.Controllers
 
             await _context.SaveChangesAsync();
             return Ok(new { message = $"Đã chốt sổ và chuyển quyền nhập điểm sang năm {targetYear} thành công!" });
+        }
+
+        [Authorize(Roles = "HieuTruong")]
+        [HttpPost("them-nien-khoa")]
+        public async Task<IActionResult> ThemNienKhoa([FromBody] string newYear)
+        {
+            if (string.IsNullOrEmpty(newYear)) return BadRequest(new { message = "Niên khóa không được để trống" });
+            newYear = newYear.Trim();
+
+            // Validate format YYYY-YYYY: vd 2026-2027
+            var match = System.Text.RegularExpressions.Regex.Match(newYear, @"^(\d{4})-(\d{4})$");
+            if (!match.Success)
+            {
+                return BadRequest(new { message = "Định dạng niên khóa không hợp lệ (phải là YYYY-YYYY, ví dụ: 2026-2027)" });
+            }
+
+            int yearStart = int.Parse(match.Groups[1].Value);
+            int yearEnd = int.Parse(match.Groups[2].Value);
+            if (yearEnd != yearStart + 1)
+            {
+                return BadRequest(new { message = "Niên khóa không hợp lệ. Năm kết thúc phải lớn hơn năm bắt đầu đúng 1 năm (ví dụ: 2026-2027)" });
+            }
+
+            var checkExist = await _context.DanhMucNienKhoas.FirstOrDefaultAsync(n => n.MaNienKhoa == newYear);
+            if (checkExist != null)
+            {
+                return BadRequest(new { message = "Niên khóa này đã tồn tại trong hệ thống" });
+            }
+
+            var nk = new DanhMucNienKhoa
+            {
+                MaNienKhoa = newYear,
+                TenNienKhoa = $"Niên khóa {newYear}",
+                IsActive = false,
+                NgayTao = DateTime.Now
+            };
+
+            _context.DanhMucNienKhoas.Add(nk);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Đã thêm niên khóa {newYear} thành công!" });
         }
          // 1. Lấy danh sách tất cả giáo viên để Hiệu trưởng chọn
         [HttpGet("danh-sach-giao-vien")]   
@@ -79,7 +131,7 @@ namespace DoAn_WebHocVu_API.Controllers
 
             // 4. GÁC CỔNG C#: Kiểm tra giáo viên mới này đã chủ nhiệm lớp khác chưa
             var daChuNhiemLopKhac = await _context.LopHocs
-                .AnyAsync(l => l.GvchuNhiem == maGVCN && l.MaLop != maLop);
+                .AnyAsync(l => l.GvchuNhiem == maGVCN && l.MaLop != maLop && l.NienKhoa == lop.NienKhoa);
 
             if (daChuNhiemLopKhac)
             {
@@ -296,7 +348,7 @@ namespace DoAn_WebHocVu_API.Controllers
                 string baseName = oc.TenLop; // "1A"
                 string newMaLop = "L" + baseName + "_26";
                 // GVCN: Để null để hiệu trưởng phân công sau, hoặc random
-                if (!await _context.LopHocs.AnyAsync(l => l.MaLop == newMaLop))
+                if (!await _context.LopHocs.AnyAsync(l => l.MaLop == newMaLop) && !_context.LopHocs.Local.Any(l => l.MaLop == newMaLop))
                 {
                     _context.LopHocs.Add(new LopHoc { MaLop = newMaLop, TenLop = baseName, NienKhoa = "2026-2027" });
                 }
@@ -324,7 +376,7 @@ namespace DoAn_WebHocVu_API.Controllers
                 var hsCu = await _context.LichSuPhanLops.Where(l => l.MaLop == oc.MaLop).ToListAsync();
                 foreach (var ls in hsCu)
                 {
-                    if (!await _context.LichSuPhanLops.AnyAsync(hc => hc.MaHs == ls.MaHs && hc.NienKhoa == "2026-2027"))
+                    if (!await _context.LichSuPhanLops.AnyAsync(hc => hc.MaHs == ls.MaHs && hc.NienKhoa == "2026-2027") && !_context.LichSuPhanLops.Local.Any(hc => hc.MaHs == ls.MaHs && hc.NienKhoa == "2026-2027"))
                     {
                          _context.LichSuPhanLops.Add(new LichSuPhanLop {
                               MaHs = ls.MaHs,

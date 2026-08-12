@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Tag, Button, InputNumber, Select, Alert, Space, Typography, Tooltip, message, Badge, Spin, Modal, Empty, Input, Switch, Popconfirm } from 'antd';
-import { SafetyOutlined, LockOutlined, ExportOutlined, SendOutlined, ExclamationCircleOutlined, UserOutlined, BookOutlined } from '@ant-design/icons';
+import { SafetyOutlined, LockOutlined, ExportOutlined, SendOutlined, ExclamationCircleOutlined, UserOutlined, BookOutlined, FileExcelOutlined } from '@ant-design/icons';
 import apiClient from '../../../services/apiClient';
 
 const { Title, Paragraph, Text } = Typography;
@@ -158,33 +158,53 @@ export default function GradingPage() {
       const listClasses = resClasses.data || [];
       setClasses(listClasses);
 
+      const savedWorkingYear = localStorage.getItem('working_academic_year') || '';
+
+      // Tải niên khóa hiện tại
+      let currentActiveNK = '2025-2026';
       try {
         const resNK = await apiClient.get('/QuanLyTruong/nien-khoa-hien-tai');
         if (resNK.data?.activeAcademicYear) {
           setActiveAcademicYear(resNK.data.activeAcademicYear);
+          currentActiveNK = resNK.data.activeAcademicYear;
         }
       } catch (err) {
         console.warn("Could not fetch active academic year", err);
       }
 
-      if (listClasses.length > 0) {
-        const uniqueNK = Array.from(new Set(listClasses.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
-        setNienKhoaList(uniqueNK as string[]);
+      const workingNK = savedWorkingYear || currentActiveNK;
+      setSelectedNienKhoa(workingNK);
+
+      // Tải danh sách niên khóa từ DB
+      try {
+        const resNKList = await apiClient.get('/QuanLyTruong/danh-sach-nien-khoa');
+        if (resNKList.data) {
+          setNienKhoaList(resNKList.data);
+        }
+      } catch (e) {
+        if (listClasses.length > 0) {
+          const uniqueNK = Array.from(new Set(listClasses.map((x: any) => x.nienKhoa))).sort((a: any, b: any) => b.localeCompare(a));
+          setNienKhoaList(uniqueNK as string[]);
+        }
       }
 
+      const classesInYear = listClasses.filter((c: any) => c.nienKhoa === workingNK);
+
       const setInitialClass = async (classCode: string, nk?: string) => {
-        setSelectedNienKhoa(nk || '');
         setSelectedClass(classCode);
-        await loadClassGradesAndPermissions(classCode, username, role);
+        await loadClassGradesAndPermissions(classCode, username, role, false, nk || workingNK);
       };
 
       if (role === 'HieuTruong') {
-        if (listClasses.length > 0) {
-          await setInitialClass(listClasses[0].maLop, listClasses[0].nienKhoa);
+        if (classesInYear.length > 0) {
+          await setInitialClass(classesInYear[0].maLop, classesInYear[0].nienKhoa);
+        } else {
+          setSelectedClass('');
+          setGradeRecords([]);
         }
       } else if (role === 'GiaoVien') {
-        // Kiểm tra xem là chủ nhiệm lớp nào
-        const gvcnObj = listClasses.find(
+        // Kiểm tra xem là chủ nhiệm lớp nào của năm học đang chọn
+        const gvcnObj = classesInYear.find(
           (c: any) => c.gvchuNhiem?.trim().toUpperCase() === username.trim().toUpperCase()
         );
 
@@ -197,13 +217,20 @@ export default function GradingPage() {
           setIsGvcn(false);
           const resLich = await apiClient.get(`/TaiKhoan/lich-day/${username}`);
           if (resLich.data && Array.isArray(resLich.data)) {
-            const assignedClassCodes = Array.from(new Set(resLich.data.map((l: any) => l.maLop))) as string[];
+            // Lọc ra các phân công nằm thuộc niên khóa đang hoạt động/làm việc
+            const currentYearSchedules = resLich.data.filter((l: any) => l.nienKhoa === workingNK);
+            const assignedClassCodes = Array.from(new Set(currentYearSchedules.map((l: any) => l.maLop))) as string[];
             if (assignedClassCodes.length > 0) {
-              const matchedClass = listClasses.find((c: any) => c.maLop === assignedClassCodes[0]);
+              const matchedClass = classesInYear.find((c: any) => c.maLop === assignedClassCodes[0]);
               await setInitialClass(assignedClassCodes[0], matchedClass?.nienKhoa);
             } else {
-              message.info(`Giáo viên ${username} chưa được sắp lịch giảng dạy nào.`);
+              setSelectedClass('');
+              setGradeRecords([]);
+              message.info(`Giáo viên ${username} chưa được sắp lịch giảng dạy nào trong năm ${workingNK}.`);
             }
+          } else {
+            setSelectedClass('');
+            setGradeRecords([]);
           }
         }
       }
@@ -442,6 +469,60 @@ export default function GradingPage() {
   // Quyền xuất học bạ & gửi tin nhắn: Chỉ dành riêng cho Giáo viên chủ nhiệm lớp hiện tại
   const canPerformGvcnActions = currentUser?.role === 'GiaoVien' && isGvcn && selectedClass === myGvcnClass;
 
+  // Quyền xuất học bạ: Giáo viên chủ nhiệm của lớp đó HOẶC Ban giám hiệu (Hiệu trưởng)
+  const canExportGrades = canPerformGvcnActions || currentUser?.role === 'HieuTruong';
+
+  // Hỗ trợ xuất Excel bảng điểm lớp học (định dạng UTF-16LE TSV tiếng Việt chuẩn)
+  const exportGradesToExcel = (data: any[], classNameVal: string, semesterNameVal: string) => {
+    if (!data || data.length === 0) {
+      message.warning('Không có dữ liệu điểm để xuất!');
+      return;
+    }
+    const subjects = data[0].chiTietDiem || [];
+    const headers = ['Mã Học Sinh', 'Tên Học Sinh', ...subjects.map((sub: any) => sub.tenMon), 'Danh hiệu thi đua'];
+    
+    const rows = data.map((hs: any) => {
+      const row = [
+        hs.maHs,
+        hs.hoTen || ''
+      ];
+      subjects.forEach((sub: any) => {
+        const mon = hs.chiTietDiem?.find((m: any) => m.tenMon === sub.tenMon);
+        let cellVal = '';
+        if (mon) {
+          if (mon.diemThi !== null && mon.xepLoai) {
+            cellVal = `${mon.diemThi} (${mon.xepLoai})`;
+          } else if (mon.diemThi !== null) {
+            cellVal = `${mon.diemThi}`;
+          } else if (mon.xepLoai) {
+            cellVal = mon.xepLoai;
+          }
+        }
+        row.push(cellVal);
+      });
+      row.push(hs.khenThuong || '');
+      return row;
+    });
+
+    const content = [headers.join('\t'), ...rows.map(r => r.join('\t'))].join('\r\n');
+    const buffer = new ArrayBuffer(2 + content.length * 2);
+    const view = new DataView(buffer);
+    view.setUint16(0, 0xFEFF, true); // UTF-16LE BOM
+    for (let i = 0; i < content.length; i++) {
+      view.setUint16(2 + i * 2, content.charCodeAt(i), true);
+    }
+
+    const blob = new Blob([buffer], { type: 'text/csv;charset=utf-16le;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Bang_diem_lop_${classNameVal.replace(/\s+/g, '_')}_Ky_${semesterNameVal.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    message.success('Đã tải xuống file Excel bảng điểm!');
+  };
+
   // Gọi API xuất học bạ cấp lớp của GVCN
   const handleExport = async () => {
     setLoading(true);
@@ -468,6 +549,28 @@ export default function GradingPage() {
                 <div style={{ color: '#78350f', fontWeight: 'bold' }}>Học Sinh Tiêu Biểu</div>
                 <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#b45309', marginTop: '4px' }}>{countTieuBieu} em</div>
               </div>
+            </div>
+
+            <div className="mb-4 text-right">
+              <Button 
+                type="primary" 
+                icon={<FileExcelOutlined />} 
+                className="bg-emerald-600 border-emerald-600 hover:bg-emerald-700 font-semibold"
+                onClick={() => {
+                  const getSemesterName = (hk: number) => {
+                    switch (hk) {
+                      case 1: return 'Giữa HK1';
+                      case 2: return 'Cuối HK1';
+                      case 3: return 'Giữa HK2';
+                      case 4: return 'Cuối HK2';
+                      default: return 'HK' + hk;
+                    }
+                  };
+                  exportGradesToExcel(data, selectedClass, getSemesterName(selectedHocKy));
+                }}
+              >
+                Tải File Excel Bảng Điểm
+              </Button>
             </div>
 
             <Table
@@ -764,32 +867,9 @@ export default function GradingPage() {
             </div>
             <div className="flex items-center gap-2">
               <Text className="text-slate-600 font-bold text-xs">Năm Học:</Text>
-              <Select
-                value={selectedNienKhoa || undefined}
-                onChange={(val) => {
-                  setSelectedNienKhoa(val);
-                  const classesInYear = classes.filter((c: any) => c.nienKhoa === val);
-                  if (classesInYear.length > 0) {
-                    handleClassChange(classesInYear[0].maLop, val);
-                    
-                    // Nếu là năm cũ, tự động bật cờ hiển thị tất cả
-                    if (val !== activeAcademicYear) {
-                      setShowAllStudents(true);
-                    }
-                  } else {
-                    setSelectedClass('');
-                    setGradeRecords([]);
-                  }
-                }}
-                style={{ width: 120 }}
-                className="font-bold border-indigo-400"
-                options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
-              />
-              {currentUser?.role === 'HieuTruong' && selectedNienKhoa !== activeAcademicYear && selectedNienKhoa !== '' && (
-                <Popconfirm title={`Chốt niên khóa ${selectedNienKhoa} làm năm hiện hành (Mở khóa sửa đổi)?`} onConfirm={() => handleChotNienKhoa(selectedNienKhoa)}>
-                  <Button type="primary" danger icon={<LockOutlined />}>Chốt Năm Này</Button>
-                </Popconfirm>
-              )}
+              <Tag color="blue" className="font-bold text-sm px-3 py-1 m-0 border-blue-200">
+                {selectedNienKhoa}
+              </Tag>
             </div>
             <div className="flex items-center gap-2">
               <Text className="text-slate-600 font-bold text-xs">Học Kỳ:</Text>
@@ -888,14 +968,14 @@ export default function GradingPage() {
               Sổ điểm chi tiết - Lớp {selectedClass}
             </span>
             <Space>
-              <Tooltip title={!canPerformGvcnActions ? 'Chỉ Giáo viên chủ nhiệm mới được phép Xuất bảng điểm.' : isDataIncomplete ? 'Yêu cầu hoàn thiện điểm số lớp hợp lệ trước khi xuất!' : ''}>
+              <Tooltip title={!canExportGrades ? 'Chỉ Giáo viên chủ nhiệm hoặc Ban giám hiệu mới được phép Xuất bảng điểm.' : isDataIncomplete ? 'Yêu cầu hoàn thiện điểm số lớp hợp lệ trước khi xuất!' : ''}>
                 <Button 
                   type="default" 
                   icon={<ExportOutlined />} 
                   onClick={handleExport}
-                  disabled={!canPerformGvcnActions || isDataIncomplete || isLockedByYear}
+                  disabled={!canExportGrades || isDataIncomplete || isLockedByYear}
                 >
-                  Xuất bảng điểm (GVCN)
+                  Xuất bảng điểm (Excel)
                 </Button>
               </Tooltip>
               

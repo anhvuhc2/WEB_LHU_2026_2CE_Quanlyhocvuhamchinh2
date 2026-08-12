@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Avatar, Dropdown, Space, Typography, Badge, Card } from 'antd';
+import { Layout, Menu, Button, Avatar, Dropdown, Space, Typography, Badge, Card, Select } from 'antd';
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
@@ -14,7 +14,8 @@ import {
   BulbOutlined,
   SafetyCertificateOutlined,
   DashboardOutlined,
-  DownOutlined
+  DownOutlined,
+  CalendarOutlined
 } from '@ant-design/icons';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
@@ -43,6 +44,14 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
   const [mockAccounts, setMockAccounts] = useState<any[]>([]);
   const [isGVCN, setIsGVCN] = useState<boolean>(false);
+  const [nienKhoaList, setNienKhoaList] = useState<string[]>([]);
+  const [workingYear, setWorkingYear] = useState<string>('');
+
+  const handleWorkingYearChange = (year: string) => {
+    localStorage.setItem('working_academic_year', year);
+    setWorkingYear(year);
+    window.location.reload();
+  };
 
   const handleRoleChange = async (username: string, vaiTro: string, hoTen: string, triggerReload = false) => {
     setCurrentRole(vaiTro);
@@ -79,6 +88,30 @@ export default function MainLayout({ children }: MainLayoutProps) {
     apiClient.get('/TaiKhoan/all-for-testing')
       .then(res => setMockAccounts(res.data))
       .catch(e => console.error("Lõi tải mỏck acc", e));
+
+    // Tải danh sách niên khóa từ DB
+    apiClient.get('/QuanLyTruong/danh-sach-nien-khoa')
+      .then(res => {
+        if (Array.isArray(res.data)) {
+          setNienKhoaList(res.data);
+        }
+      })
+      .catch(e => console.error("Lỗi tải danh sách niên khóa", e));
+
+    // Xác định niên khóa làm việc hiện tại
+    const savedWorkingYear = localStorage.getItem('working_academic_year');
+    if (savedWorkingYear) {
+      setWorkingYear(savedWorkingYear);
+    } else {
+      apiClient.get('/QuanLyTruong/nien-khoa-hien-tai')
+        .then(res => {
+          if (res.data?.activeAcademicYear) {
+            localStorage.setItem('working_academic_year', res.data.activeAcademicYear);
+            setWorkingYear(res.data.activeAcademicYear);
+          }
+        })
+        .catch(e => console.error("Lỗi tải niên khóa hiện tại", e));
+    }
 
     const savedRole = localStorage.getItem('user_role');
     const savedUsername = localStorage.getItem('user_username');
@@ -256,6 +289,20 @@ export default function MainLayout({ children }: MainLayoutProps) {
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Working Academic Year Selector */}
+            <div className="flex items-center gap-1.5 mr-2">
+              <span className="font-medium text-xs text-slate-600 hidden sm:inline">Niên khóa:</span>
+              <Select
+                value={workingYear || undefined}
+                onChange={handleWorkingYearChange}
+                style={{ width: 140 }}
+                options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+                suffixIcon={<CalendarOutlined className="text-blue-500" />}
+                className="font-bold border-slate-300"
+                placeholder="Chọn niên khóa"
+              />
+            </div>
+
             {/* RBAC Simulation Selector */}
             <Dropdown menu={{ items: roleMenuItems }} placement="bottomRight" arrow>
               <Button type="default" className="flex items-center gap-2 border-slate-350 shadow-sm hover:border-blue-500">

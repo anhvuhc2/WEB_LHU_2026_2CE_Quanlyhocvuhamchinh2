@@ -82,8 +82,15 @@ namespace DoAn_WebHocVu_API.Controllers
         // =========================================================================
         [HttpGet("danh-sach-giao-vien")]
         [Authorize(Roles = "HieuTruong,GiaoVien")]
-        public async Task<IActionResult> LayDanhSachGiaoVien()
+        public async Task<IActionResult> LayDanhSachGiaoVien([FromQuery] string? nienKhoa)
         {
+            var activeYear = await _context.DanhMucNienKhoas
+                .Where(n => n.IsActive)
+                .Select(n => n.MaNienKhoa)
+                .FirstOrDefaultAsync() ?? "2025-2026"; // Fallback nếu lỗi
+
+            string targetYear = !string.IsNullOrEmpty(nienKhoa) ? nienKhoa : activeYear;
+
             // BƯỚC 1: Lấy dữ liệu an toàn từ Database (Chỉ lọc lấy Giáo viên, bỏ qua Phụ huynh)
             var danhSachTho = await _context.TaiKhoans
                 .Where(t => t.VaiTro == "GiaoVien")
@@ -92,24 +99,21 @@ namespace DoAn_WebHocVu_API.Controllers
                     tk.TenDangNhap,
                     tk.HoTen,
                     tk.VaiTro,
-                    PhanCongGiangDays = tk.PhanCongGiangDays.Select(pc => new
-                    {
-                        MaLop = pc.MaLop,
-                        MaMon = pc.MaMon
-                    }).ToList()
+                    PhanCongGiangDays = tk.PhanCongGiangDays
+                        .Where(pc => pc.NienKhoa == targetYear)
+                        .Select(pc => new
+                        {
+                            MaLop = pc.MaLop,
+                            MaMon = pc.MaMon
+                        }).ToList()
                 })
                 .ToListAsync();
-
-            var activeYear = await _context.DanhMucNienKhoas
-                .Where(n => n.IsActive)
-                .Select(n => n.MaNienKhoa)
-                .FirstOrDefaultAsync() ?? "2025-2026"; // Fallback nếu lỗi
 
             var allLopHocs = await _context.LopHocs.ToListAsync();
 
             // BƯỚC 2: Chế biến thêm cột "NhiemVu" ngay trên RAM của máy chủ
             var danhSachHoanThien = danhSachTho.Select(tk => {
-                var cacLopChuNhiem = allLopHocs.Where(l => l.GvchuNhiem == tk.TenDangNhap && l.NienKhoa == activeYear).ToList();
+                var cacLopChuNhiem = allLopHocs.Where(l => l.GvchuNhiem == tk.TenDangNhap && l.NienKhoa == targetYear).ToList();
                 string nhiemVu = "Chưa phân công";
 
                 if (cacLopChuNhiem.Count > 0)
@@ -378,7 +382,7 @@ namespace DoAn_WebHocVu_API.Controllers
         /// </summary>
         [HttpGet("lich-day/{maGiaoVien}")]
         [Authorize(Roles = "HieuTruong,GiaoVien")] // Sếp và đồng nghiệp đều xem được
-        public async Task<IActionResult> XemLichDay(string maGiaoVien)
+        public async Task<IActionResult> XemLichDay(string maGiaoVien, [FromQuery] string? nienKhoa)
         {
             // BƯỚC 1: KIỂM TRA XEM MÃ NÀY CÓ TỒN TẠI KHÔNG VÀ CÓ PHẢI LÀ GIÁO VIÊN KHÔNG
             var giaoVien = await _context.TaiKhoans.FirstOrDefaultAsync(t => t.TenDangNhap == maGiaoVien);
@@ -394,14 +398,20 @@ namespace DoAn_WebHocVu_API.Controllers
             }
 
             // BƯỚC 2: NẾU TỒN TẠI, BẮT ĐẦU TÌM LỊCH DẠY
-            var lichDay = await _context.PhanCongGiangDays
-                                        .Where(p => p.MaGiaoVien == maGiaoVien)
-                                        .ToListAsync();
+            var queryLich = _context.PhanCongGiangDays.Where(p => p.MaGiaoVien == maGiaoVien);
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryLich = queryLich.Where(p => p.NienKhoa == nienKhoa);
+            }
+            var lichDay = await queryLich.ToListAsync();
 
             // BƯỚC 3: XỬ LÝ LỊCH ẢO - CẤP CHO GVCN NHỮNG MÔN 'BAO SÔ'
-            var cacLopChuNhiem = await _context.LopHocs
-                .Where(l => l.GvchuNhiem.Trim().ToUpper() == maGiaoVien.Trim().ToUpper())
-                .ToListAsync();
+            var queryLop = _context.LopHocs.Where(l => l.GvchuNhiem.Trim().ToUpper() == maGiaoVien.Trim().ToUpper());
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryLop = queryLop.Where(l => l.NienKhoa == nienKhoa);
+            }
+            var cacLopChuNhiem = await queryLop.ToListAsync();
 
             if (cacLopChuNhiem.Any())
             {
@@ -436,7 +446,8 @@ namespace DoAn_WebHocVu_API.Controllers
                                 MaMon = monObj != null ? monObj.MaMon : mm,
                                 Thu = "Cả tuần",
                                 Buoi = "Linh hoạt",
-                                Tiet = null
+                                Tiet = null,
+                                NienKhoa = lop.NienKhoa
                             });
                         }
                     }
@@ -471,7 +482,11 @@ namespace DoAn_WebHocVu_API.Controllers
             }
 
             // --- BƯỚC RÀO CHẮN AN NINH ---
-            var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == hocSinh.MaLop);
+            var currentHistory = await _context.LichSuPhanLops
+                .OrderByDescending(l => l.NienKhoa)
+                .FirstOrDefaultAsync(l => l.MaHs == maHs);
+            string maLop = currentHistory?.MaLop ?? hocSinh.MaLop;
+            var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == maLop);
             // Nếu là Giáo viên thì bắt buộc phải là GVCN của lớp này mới được phép
             if (lopHoc != null && vaiTro != "HieuTruong")
             {
