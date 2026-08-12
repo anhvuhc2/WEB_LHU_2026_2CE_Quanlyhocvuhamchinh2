@@ -62,6 +62,45 @@ namespace DoAn_WebHocVu_API.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
+                // Tự động gỡ chuông cảnh báo BGH đôn đốc cho lớp này khi đã nộp kế hoạch thành công
+                var lopHoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop.Trim() == maLop.Trim());
+                string tenLop = lopHoc?.TenLop?.Trim() ?? "";
+                string maLopClean = maLop.Trim();
+                string nguoiDangClean = nguoiDang?.Trim() ?? "";
+
+                var pendingReminders = await _context.TuongTacs
+                    .Where(t => t.TrangThai == "Chờ GV xử lý" && t.MaKeHoach == null && t.NoiDung != null && t.NoiDung.Contains("[HỆ THỐNG BGH ĐÔN ĐỐC]"))
+                    .ToListAsync();
+
+                foreach (var reminder in pendingReminders)
+                {
+                    bool isMatch = false;
+
+                    // 1. Tag [LOP:...] mới
+                    if (reminder.NoiDung.Contains($"[LOP:{maLopClean}]") || reminder.NoiDung.ToLower().Contains($"[lop:{maLopClean.ToLower()}]"))
+                    {
+                        isMatch = true;
+                    }
+                    // 2. Chứa mã lớp thô
+                    else if (reminder.NoiDung.Contains(maLopClean) || reminder.NoiDung.ToLower().Contains(maLopClean.ToLower()))
+                    {
+                        isMatch = true;
+                    }
+                    // 3. Chứa tên lớp (Old style DB)
+                    else if (!string.IsNullOrEmpty(tenLop) && (reminder.NoiDung.Contains(tenLop) || reminder.NoiDung.ToLower().Contains(tenLop.ToLower())))
+                    {
+                        if (reminder.TenDangNhap.Trim().Equals(nguoiDangClean, StringComparison.OrdinalIgnoreCase))
+                        {
+                            isMatch = true;
+                        }
+                    }
+
+                    if (isMatch)
+                    {
+                        reminder.TrangThai = "Đã xem";
+                    }
+                }
+
                 // Thêm vào bảng Kế Hoạch và lưu Database
                 _context.KeHoachLops.Add(keHoach);
                 await _context.SaveChangesAsync();
@@ -251,11 +290,11 @@ namespace DoAn_WebHocVu_API.Controllers
             if (!string.IsNullOrEmpty(dto.MaMon))
             {
                 var mon = await _context.MonHocs.FirstOrDefaultAsync(m => m.MaMon == dto.MaMon);
-                messageContent = $"[TO:{dto.MaGiaoVien.Trim()}] [HỆ THỐNG BGH ĐÔN ĐỐC] Thầy/Cô vui lòng cập nhật Kế hoạch tuần môn {mon?.TenMon ?? dto.MaMon} {lop.TenLop}!";
+                messageContent = $"[TO:{dto.MaGiaoVien.Trim()}] [LOP:{dto.MaLop.Trim()}] [HỆ THỐNG BGH ĐÔN ĐỐC] Thầy/Cô vui lòng cập nhật Kế hoạch tuần môn {mon?.TenMon ?? dto.MaMon} {lop.TenLop}!";
             }
             else
             {
-                messageContent = $"[TO:{dto.MaGiaoVien.Trim()}] [HỆ THỐNG BGH ĐÔN ĐỐC] Thầy/Cô vui lòng cập nhật Kế hoạch chủ nhiệm/bảng điểm {lop.TenLop}!";
+                messageContent = $"[TO:{dto.MaGiaoVien.Trim()}] [LOP:{dto.MaLop.Trim()}] [HỆ THỐNG BGH ĐÔN ĐỐC] Thầy/Cô vui lòng cập nhật Kế hoạch chủ nhiệm/bảng điểm {lop.TenLop}!";
             }
 
             var tuongTac = new TuongTac

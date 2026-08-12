@@ -338,7 +338,7 @@ namespace DoAn_WebHocVu_API.Controllers
         /// Cấp số liệu cho cái Chuông thông báo trên giao diện Front-end
         [HttpGet("thong-bao-chuong")]
         [Authorize] // Bắt buộc phải có token đăng nhập mới được gọi API này
-        public async Task<IActionResult> DemSoTinNhanCho()
+        public async Task<IActionResult> DemSoTinNhanCho([FromQuery] string? nienKhoa = null)
         {
             // 1. Lấy mã giáo viên đang đăng nhập từ Token (Chìa khóa)
             var maGiaoVien = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
@@ -349,29 +349,87 @@ namespace DoAn_WebHocVu_API.Controllers
             }
 
             // 2. Chỉ đếm tin nhắn "Chờ GV xử lý" VÀ tin nhắn đó phải thuộc về cái Kế hoạch/Thông báo do chính giáo viên này đăng
-            var soLuongKeHoach = await _context.TuongTacs
+            IQueryable<TuongTac> queryKeHoach = _context.TuongTacs
                 .Include(t => t.MaKeHoachNavigation) // Kết nối sang bảng KeHoachLop
-                .CountAsync(t => t.TrangThai == "Chờ GV xử lý" &&
-                                 t.MaKeHoachNavigation != null &&
-                                 t.MaKeHoachNavigation.NguoiDang == maGiaoVien); // Chốt chặn bảo mật ở đây!
+                .ThenInclude(kh => kh.MaLopNavigation)
+                .Where(t => t.TrangThai == "Chờ GV xử lý" &&
+                            t.MaKeHoachNavigation != null &&
+                            t.MaKeHoachNavigation.NguoiDang.Trim() == maGiaoVien.Trim());
+
+            string nkClean = nienKhoa?.Trim() ?? "2026-2027";
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryKeHoach = queryKeHoach.Where(t => t.MaKeHoachNavigation.MaLopNavigation.NienKhoa.Trim() == nkClean);
+            }
+            var soLuongKeHoach = await queryKeHoach.CountAsync();
 
             // 3. Đếm thêm tin nhắn "Chờ GV xử lý" dạng Tự_Do (MaKeHoach = null) dành cho GVCN
             // Lấy danh sách lớp chủ nhiệm
-            var lopChuNhiems = await _context.LopHocs.Where(l => l.GvchuNhiem == maGiaoVien).Select(l => l.MaLop).ToListAsync();
-            // Lấy danh sách tài khoản PH của các lớp này
-            var danhSachPhuHuynh = await _context.HocSinhs.Where(h => lopChuNhiems.Contains(h.MaLop)).Select(h => h.TaiKhoanPhuHuynh).ToListAsync();
+            IQueryable<LopHoc> queryLopCN = _context.LopHocs.Where(l => l.GvchuNhiem.Trim() == maGiaoVien.Trim());
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryLopCN = queryLopCN.Where(l => l.NienKhoa.Trim() == nkClean);
+            }
+            var lopChuNhiems = await queryLopCN.Select(l => l.MaLop.Trim()).ToListAsync();
+
+            // Lấy danh sách tài khoản PH của các lớp này: cả hiện tại (ở năm đó) và lịch sử
+            List<string?> currentParents = await _context.HocSinhs
+                .Where(h => lopChuNhiems.Contains(h.MaLop.Trim()) && !string.IsNullOrEmpty(h.TaiKhoanPhuHuynh))
+                .Select(h => h.TaiKhoanPhuHuynh.Trim())
+                .ToListAsync();
+
+            List<string?> historyParents = new List<string?>();
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                var histStudentIds = await _context.LichSuPhanLops
+                    .Where(l => lopChuNhiems.Contains(l.MaLop.Trim()) && l.NienKhoa.Trim() == nkClean)
+                    .Select(l => l.MaHs.Trim())
+                    .ToListAsync();
+
+                historyParents = await _context.HocSinhs
+                    .Where(h => histStudentIds.Contains(h.MaHs.Trim()) && !string.IsNullOrEmpty(h.TaiKhoanPhuHuynh))
+                    .Select(h => h.TaiKhoanPhuHuynh.Trim())
+                    .ToListAsync();
+            }
+
+            var danhSachPhuHuynh = currentParents.Union(historyParents).Distinct().ToList();
             
             var soLuongTuDo = await _context.TuongTacs
                 .CountAsync(t => t.TrangThai == "Chờ GV xử lý" && 
                                  t.MaKeHoach == null && 
-                                 danhSachPhuHuynh.Contains(t.TenDangNhap));
+                                 danhSachPhuHuynh.Contains(t.TenDangNhap.Trim()));
 
             // --- CHỈ BỔ SUNG ĐIỂM NÀY: ĐẾM RIÊNG KHÚC ĐUÔI CHO GVBM ---
             string maGvClean = maGiaoVien.Trim();
-            var soLuongGVBM = await _context.TuongTacs
-                .CountAsync(t => t.TrangThai.Contains("Chờ GV xử lý") && 
+            string targetToTag = "[TO:" + maGvClean + "]";
+            var tinNhansGVBMRaw = await _context.TuongTacs
+                .Where(t => t.TrangThai.Contains("Chờ GV xử lý") && 
                                  t.MaKeHoach == null && 
-                                 t.NoiDung.Contains("[TO:" + maGvClean + "]"));
+                                 t.NoiDung != null &&
+                                 t.NoiDung.ToUpper().Contains(targetToTag.ToUpper()))
+                .ToListAsync();
+
+            int soLuongGVBM = 0;
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                foreach (var t in tinNhansGVBMRaw)
+                {
+                    var match = System.Text.RegularExpressions.Regex.Match(t.NoiDung, @"\[LOP:(.*?)\]");
+                    if (match.Success)
+                    {
+                        string mlClean = match.Groups[1].Value.Trim();
+                        var lop = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop.Trim() == mlClean);
+                        if (lop != null && lop.NienKhoa.Trim() == nkClean)
+                        {
+                            soLuongGVBM++;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                soLuongGVBM = tinNhansGVBMRaw.Count;
+            }
 
             int soLuong = soLuongKeHoach + soLuongTuDo + soLuongGVBM;
 
@@ -464,35 +522,57 @@ namespace DoAn_WebHocVu_API.Controllers
             });
         }
         [HttpGet("hop-thu-giao-vien/{maGiaoVien}")]
-        public async Task<IActionResult> LayHopThuGiaoVien(string maGiaoVien)
+        public async Task<IActionResult> LayHopThuGiaoVien(string maGiaoVien, [FromQuery] string? nienKhoa = null)
         {
             if (string.IsNullOrEmpty(maGiaoVien)) return BadRequest("Mã giáo viên không hợp lệ!");
             maGiaoVien = maGiaoVien.Trim();
+            string nkClean = nienKhoa?.Trim() ?? "2026-2027";
 
             // 1. Lớp chủ nhiệm
-            var lopChuNhiems = await _context.LopHocs
-                .Where(l => l.GvchuNhiem.Trim() == maGiaoVien)
-                .Select(l => l.MaLop.Trim())
-                .ToListAsync();
+            IQueryable<LopHoc> queryLopCN = _context.LopHocs.Where(l => l.GvchuNhiem.Trim() == maGiaoVien);
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryLopCN = queryLopCN.Where(l => l.NienKhoa.Trim() == nkClean);
+            }
+            var lopChuNhiems = await queryLopCN.Select(l => l.MaLop.Trim()).ToListAsync();
 
             // 2. Lớp dạy bộ môn
-            var lopBoMons = await _context.PhanCongGiangDays
-                .Where(p => p.MaGiaoVien.Trim() == maGiaoVien)
-                .Select(p => p.MaLop.Trim())
-                .ToListAsync();
+            IQueryable<PhanCongGiangDay> queryPc = _context.PhanCongGiangDays.Where(p => p.MaGiaoVien.Trim() == maGiaoVien);
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                queryPc = queryPc.Where(p => p.NienKhoa.Trim() == nkClean);
+            }
+            var lopBoMons = await queryPc.Select(p => p.MaLop.Trim()).ToListAsync();
 
             var danhSachLop = lopChuNhiems.Union(lopBoMons).Distinct().ToList();
 
-            // 3. Lấy tập hợp Phụ huynh thuộc các lớp trên
-            var danhSachPhuHuynh = await _context.HocSinhs
+            // 3. Lấy tập hợp Phụ huynh thuộc các lớp trên: cả hiện tại (ở năm đó) và lịch sử phân lớp
+            var curParents = await _context.HocSinhs
                 .Where(hs => danhSachLop.Contains(hs.MaLop.Trim()) && !string.IsNullOrEmpty(hs.TaiKhoanPhuHuynh))
                 .Select(hs => hs.TaiKhoanPhuHuynh.Trim())
                 .Distinct()
                 .ToListAsync();
 
+            List<string> histParents = new List<string>();
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                var histStudentIds = await _context.LichSuPhanLops
+                    .Where(l => danhSachLop.Contains(l.MaLop.Trim()) && l.NienKhoa.Trim() == nkClean)
+                    .Select(l => l.MaHs.Trim())
+                    .ToListAsync();
+
+                histParents = await _context.HocSinhs
+                    .Where(hs => histStudentIds.Contains(hs.MaHs.Trim()) && !string.IsNullOrEmpty(hs.TaiKhoanPhuHuynh))
+                    .Select(hs => hs.TaiKhoanPhuHuynh.Trim())
+                    .ToListAsync();
+            }
+
+            var danhSachPhuHuynh = curParents.Union(histParents).Distinct().ToList();
+
             // 4. Quét toàn bộ hộp thư gom vào 1 dòng suối duy nhất (Có đính kèm Kế hoạch để lọc)
             var danhSachTinNhan = await _context.TuongTacs
                 .Include(t => t.MaKeHoachNavigation)
+                .ThenInclude(kh => kh.MaLopNavigation)
                 .Where(t => danhSachPhuHuynh.Contains(t.TenDangNhap.Trim()) || t.TenDangNhap.Trim() == maGiaoVien)
                 .OrderByDescending(t => t.ThoiGian)
                 .ToListAsync();
@@ -500,14 +580,56 @@ namespace DoAn_WebHocVu_API.Controllers
             // 5. Màng lọc ABAC Phân mảnh Quyền riêng tư (Privacy Leak Prevention)
             var ketQuaGiaoVien = new List<TuongTac>();
             
-            // Xây dựng bộ từ điển tra cứu nhanh Lớp Của Phụ Huynh (đề phòng phụ huynh có nhiều con)
-            var hocSinhLookup = await _context.HocSinhs
+            // Xây dựng bộ từ điển tra cứu nhanh Lớp Của Phụ Huynh: cả lớp hiện tại (nếu thuộc niên khóa này) và lớp lịch sử
+            var studentCurrentClassesMap = await _context.HocSinhs
                 .Where(hs => danhSachPhuHuynh.Contains(hs.TaiKhoanPhuHuynh.Trim()))
+                .Include(hs => hs.MaLopNavigation)
+                .Where(hs => hs.MaLopNavigation != null && hs.MaLopNavigation.NienKhoa.Trim() == nkClean)
                 .Select(hs => new { TaiKhoanPhuHuynh = hs.TaiKhoanPhuHuynh.Trim(), MaLop = hs.MaLop.Trim() })
                 .ToListAsync();
 
+            List<dynamic> studentHistoryClassesMap = new List<dynamic>();
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                var historyQuery = await _context.LichSuPhanLops
+                    .Where(l => l.NienKhoa.Trim() == nkClean && l.MaHsNavigation.TaiKhoanPhuHuynh != null && danhSachPhuHuynh.Contains(l.MaHsNavigation.TaiKhoanPhuHuynh.Trim()))
+                    .Select(l => new { TaiKhoanPhuHuynh = l.MaHsNavigation.TaiKhoanPhuHuynh.Trim(), MaLop = l.MaLop.Trim() })
+                    .ToListAsync();
+                
+                foreach (var h in historyQuery)
+                {
+                    studentHistoryClassesMap.Add(h);
+                }
+            }
+
+            var hocSinhLookup = studentCurrentClassesMap.Select(x => new { x.TaiKhoanPhuHuynh, x.MaLop })
+                .Union(studentHistoryClassesMap.Select(x => new { TaiKhoanPhuHuynh = (string)x.TaiKhoanPhuHuynh, MaLop = (string)x.MaLop }))
+                .Distinct()
+                .ToList();
+
             foreach (var t in danhSachTinNhan)
             {
+                // Lọc theo niên khóa trên bộ nhớ
+                if (!string.IsNullOrEmpty(nienKhoa))
+                {
+                    if (t.MaKeHoach != null)
+                    {
+                        if (t.MaKeHoachNavigation?.MaLopNavigation?.NienKhoa.Trim() != nkClean)
+                            continue;
+                    }
+                    else if (t.TenDangNhap.Trim() == maGiaoVien) // Bản tin nhắc nhở từ BGH gửi đích danh cho giáo viên
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(t.NoiDung, @"\[LOP:(.*?)\]");
+                        if (match.Success)
+                        {
+                            string targetLop = match.Groups[1].Value.Trim();
+                            var checkLopDoc = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop.Trim() == targetLop);
+                            if (checkLopDoc?.NienKhoa.Trim() != nkClean)
+                                continue;
+                        }
+                    }
+                }
+
                 // TH1: Tin nhắn mọc ra từ một Kế Hoạch (Plan-based message)
                 if (t.MaKeHoach != null)
                 {
@@ -558,17 +680,108 @@ namespace DoAn_WebHocVu_API.Controllers
             return Ok(ketQuaGiaoVien);
         }
 
-        /// <summary>
-        /// API để Phụ huynh xem danh sách thông báo và điểm số
-        /// </summary>
         [HttpGet("hop-thu-ca-nhan/{tenDangNhap}")]
-        public async Task<IActionResult> LayHopThuPhuHuynh(string tenDangNhap)
+        public async Task<IActionResult> LayHopThuPhuHuynh(string tenDangNhap, [FromQuery] string? nienKhoa = null)
         {
+            if (string.IsNullOrEmpty(tenDangNhap)) return BadRequest("Tên đăng nhập không hợp lệ!");
+            tenDangNhap = tenDangNhap.Trim();
+            string nkClean = nienKhoa?.Trim() ?? "2026-2027";
+
             // Truy vấn bảng TuongTac, lọc đúng tài khoản đang đăng nhập và xếp tin mới nhất lên đầu
-            var danhSachTinNhan = await _context.TuongTacs
-                .Where(t => t.TenDangNhap == tenDangNhap)
-                .OrderByDescending(t => t.ThoiGian)
-                .ToListAsync();
+            IQueryable<TuongTac> query = _context.TuongTacs
+                .Include(t => t.MaKeHoachNavigation)
+                .ThenInclude(kh => kh.MaLopNavigation)
+                .Where(t => t.TenDangNhap.Trim() == tenDangNhap);
+
+            var listRaw = await query.ToListAsync();
+            var ketQuaList = new List<TuongTac>();
+
+            // Lọc theo niên khóa trên bộ nhớ
+            if (!string.IsNullOrEmpty(nienKhoa))
+            {
+                // Lấy ra danh sách mã học sinh của các con của phụ huynh này
+                var studentIds = await _context.HocSinhs
+                    .Where(hs => hs.TaiKhoanPhuHuynh.Trim() == tenDangNhap)
+                    .Select(hs => hs.MaHs.Trim())
+                    .ToListAsync();
+
+                // Lớp hiện tại của các học sinh nếu đúng niên khóa
+                var currentClassesInNK = await _context.HocSinhs
+                    .Where(hs => studentIds.Contains(hs.MaHs.Trim()) && hs.MaLopNavigation != null && hs.MaLopNavigation.NienKhoa.Trim() == nkClean)
+                    .Select(hs => hs.MaLop!.Trim())
+                    .ToListAsync();
+
+                // Lớp lịch sử từ bảng phân lớp
+                var historyClassesInNK = await _context.LichSuPhanLops
+                    .Where(l => studentIds.Contains(l.MaHs.Trim()) && l.NienKhoa.Trim() == nkClean && !string.IsNullOrEmpty(l.MaLop))
+                    .Select(l => l.MaLop!.Trim())
+                    .ToListAsync();
+
+                var validClasses = currentClassesInNK.Union(historyClassesInNK).Distinct().ToList();
+
+                // Thầy giáo viên chủ nhiệm của năm này
+                var classGVCNS = await _context.LopHocs
+                    .Where(l => validClasses.Contains(l.MaLop.Trim()) && !string.IsNullOrEmpty(l.GvchuNhiem))
+                    .Select(l => l.GvchuNhiem.Trim().ToUpper())
+                    .ToListAsync();
+
+                // Thầy giáo viên bộ môn của năm này
+                var classGVBMS = await _context.PhanCongGiangDays
+                    .Where(p => validClasses.Contains(p.MaLop.Trim()) && !string.IsNullOrEmpty(p.MaGiaoVien) && p.NienKhoa.Trim() == nkClean)
+                    .Select(p => p.MaGiaoVien.Trim().ToUpper())
+                    .ToListAsync();
+
+                var activeTeachersInNK = classGVCNS.Union(classGVBMS).Distinct().ToList();
+
+                foreach (var t in listRaw)
+                {
+                    if (t.MaKeHoach != null)
+                    {
+                        if (t.MaKeHoachNavigation?.MaLopNavigation?.NienKhoa.Trim() == nkClean)
+                        {
+                            ketQuaList.Add(t);
+                        }
+                    }
+                    else
+                    {
+                        // Xem đây là tin nhắn trao đổi giữa Phụ huynh và Giáo viên nào
+                        // Tìm kiếm Tag [TO:GV...] hoặc [FROM:GV...] hoặc xem có gửi từ một giáo viên được gán với niên khóa này
+                        string content = t.NoiDung ?? "";
+                        
+                        // Chiết xuất danh tính giáo viên
+                        string extractedGV = "";
+                        var matchFrom = System.Text.RegularExpressions.Regex.Match(content, @"\[FROM:(.*?)\]");
+                        var matchTo = System.Text.RegularExpressions.Regex.Match(content, @"\[TO:(.*?)\]");
+                        if (matchFrom.Success)
+                        {
+                            extractedGV = matchFrom.Groups[1].Value.Trim().ToUpper();
+                        }
+                        else if (matchTo.Success)
+                        {
+                            extractedGV = matchTo.Groups[1].Value.Trim().ToUpper();
+                        }
+
+                        if (!string.IsNullOrEmpty(extractedGV))
+                        {
+                            if (activeTeachersInNK.Contains(extractedGV))
+                            {
+                                ketQuaList.Add(t);
+                            }
+                        }
+                        else
+                        {
+                            // Nếu không có Tag đặc hiệu, tạm thời giữ lại
+                            ketQuaList.Add(t);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ketQuaList = listRaw;
+            }
+
+            var danhSachTinNhan = ketQuaList.OrderByDescending(t => t.ThoiGian).ToList();
 
             if (danhSachTinNhan.Count == 0)
             {

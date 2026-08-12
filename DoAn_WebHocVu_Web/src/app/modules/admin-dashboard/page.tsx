@@ -136,17 +136,21 @@ export default function AdminDashboardPage() {
   }, []);
 
   useEffect(() => {
+    setTienDoKeHoachs([]);
     fetchTienDoData();
   }, [progressType]);
 
   const fetchTienDoData = async (nk?: string) => {
     const yearToFetch = nk || schoolActiveYear;
     if (!yearToFetch) return;
+    setLoading(true);
     try {
       const resTienDo = await apiClient.get(`/KeHoach/tien-do-toan-truong?loai=${progressType}&nienKhoa=${yearToFetch}`);
       if (resTienDo.data) setTienDoKeHoachs(resTienDo.data);
     } catch (err: any) {
       console.warn("Lỗi tải tiến độ kế hoạch:", err);
+    } finally {
+      setLoading(false);
     }
   };
 

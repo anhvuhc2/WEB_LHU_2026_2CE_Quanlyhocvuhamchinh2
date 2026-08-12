@@ -29,6 +29,9 @@ export default function AIAssistantPage() {
   const [inputVal, setInputVal] = useState('');
   const [teachers, setTeachers] = useState<{ tenDangNhap: string; hoTen: string; chucVu: string }[]>([]);
   const [selectedTeacher, setSelectedTeacher] = useState<string>('');
+  const [activeAcademicYear, setActiveAcademicYear] = useState<string>('2026-2027');
+  const [workingNK, setWorkingNK] = useState<string>('2026-2027');
+  const isLockedByYear = workingNK !== activeAcademicYear && workingNK !== '';
 
   // Form trả lời của Giáo viên
   const [replyText, setReplyText] = useState('');
@@ -56,6 +59,17 @@ export default function AIAssistantPage() {
     // 0. Quét dọn bộ nhớ chống tràn State (State Leakage Fix)
     setMailbox([]);
     setUnreadAlarms([]);
+
+    const currentNK = localStorage.getItem('working_academic_year') || '2026-2027';
+    setWorkingNK(currentNK);
+
+    apiClient.get('/QuanLyTruong/nien-khoa-hien-tai')
+      .then(res => {
+        if (res.data?.activeAcademicYear) {
+          setActiveAcademicYear(res.data.activeAcademicYear);
+        }
+      })
+      .catch(e => console.error("Lỗi lấy niên khóa hiện hành:", e));
 
     // 1. Cố gắng lấy Role từ hệ thống mô phỏng của MainLayout trước
     const savedRole = localStorage.getItem('user_role');
@@ -104,11 +118,12 @@ export default function AIAssistantPage() {
   const refreshMailbox = async (overrideRole?: string, overrideUser?: string) => {
     const activeRole = overrideRole || role;
     const activeUser = overrideUser || currentUser;
+    const workingNK = localStorage.getItem('working_academic_year') || '2026-2027';
 
     try {
       if (activeRole === 'PhuHuynh') {
         // Phụ huynh: Lấy hộp thư cá nhân của mình
-        const res = await apiClient.get(`/TuongTac/hop-thu-ca-nhan/${activeUser}`);
+        const res = await apiClient.get(`/TuongTac/hop-thu-ca-nhan/${activeUser}?nienKhoa=${workingNK}`);
         if (Array.isArray(res.data)) {
           setMailbox(res.data.reverse()); // Đảo thứ tự để hiển thị dòng chat từ trên xuống dưới
         } else {
@@ -116,7 +131,7 @@ export default function AIAssistantPage() {
         }
       } else {
         // Giáo viên: Lấy danh sách hộp thư liên lạc bằng endpoint chuẩn
-        const res = await apiClient.get(`/TuongTac/hop-thu-giao-vien/${activeUser}`);
+        const res = await apiClient.get(`/TuongTac/hop-thu-giao-vien/${activeUser}?nienKhoa=${workingNK}`);
         if (Array.isArray(res.data)) {
           setMailbox(res.data);
           
@@ -245,7 +260,17 @@ export default function AIAssistantPage() {
         </div>
       </div>
 
-      {role !== 'PhuHuynh' && unreadAlarms.length > 0 && (
+      {isLockedByYear && (
+        <Alert
+          title="Năm Học Đã Khóa Sổ (Archived)"
+          description="Dữ liệu tương tác và phản hồi của năm học cũ đã được niêm phong vĩnh viễn. Mọi chức năng trả lời và can thiệp đã bị khóa để đảm bảo tính toàn vẹn dữ liệu."
+          type="warning"
+          showIcon
+          className="mb-6 rounded-2xl"
+        />
+      )}
+
+      {role !== 'PhuHuynh' && !isLockedByYear && unreadAlarms.length > 0 && (
         <Alert
           title={
             <Space>
@@ -347,7 +372,7 @@ export default function AIAssistantPage() {
 
                   // Cắt bỏ tiền tố trong lời nhắn
                   let displayNoiDung = rawContent;
-                  displayNoiDung = displayNoiDung.replace(/\[(?:FROM|TO):.*?\]\s*/g, '');
+                  displayNoiDung = displayNoiDung.replace(/\[(?:FROM|TO|LOP):.*?\]\s*/g, '');
                   
                   if (displayNoiDung.startsWith('Giáo viên chủ nhiệm:')) displayNoiDung = displayNoiDung.replace(/^Giáo viên chủ nhiệm:\s*/, '');
                   else if (displayNoiDung.startsWith('Giáo viên:')) displayNoiDung = displayNoiDung.replace(/^Giáo viên:\s*/, '');
@@ -417,9 +442,9 @@ export default function AIAssistantPage() {
                     value={inputVal}
                     onChange={e => setInputVal(e.target.value)}
                     onPressEnter={() => handleSendTextMessage(inputVal)}
-                    placeholder="Mời Quý phụ huynh nhập nội dung trao đổi trực tiếp với Trợ lý AI..." 
+                    placeholder={isLockedByYear ? "Năm học đã khóa sổ. Không thể trao đổi." : "Mời Quý phụ huynh nhập nội dung trao đổi trực tiếp với Trợ lý AI..."} 
                     className="py-2"
-                    disabled={loading}
+                    disabled={loading || isLockedByYear}
                     allowClear
                   />
                   <Button 
@@ -428,6 +453,7 @@ export default function AIAssistantPage() {
                     icon={<SendOutlined />}
                     onClick={() => handleSendTextMessage(inputVal)}
                     loading={loading}
+                    disabled={isLockedByYear}
                   >
                     Gửi tin
                   </Button>
@@ -447,15 +473,17 @@ export default function AIAssistantPage() {
                     <span className="text-slate-800 font-bold text-xs flex items-center gap-1">
                       <BellOutlined className="text-red-500" /> Bảng Cảnh Báo GVCN
                     </span>
-                    <Badge count={unreadAlarms.length} />
+                    <Badge count={isLockedByYear ? 0 : unreadAlarms.length} />
                   </div>
                 }
                 className="shadow-sm border border-slate-200 rounded-2xl"
                 styles={{ body: { padding: '8px' } }}
               >
-                {unreadAlarms.length === 0 ? (
+                {isLockedByYear || unreadAlarms.length === 0 ? (
                   <div className="p-6 text-center text-slate-400 text-[11px]">
-                    Không có cảnh báo khẩn nào. AI đã xử lý tự động toàn bộ tin nhắn.
+                    {isLockedByYear 
+                      ? "Năm học đã khóa sổ (Archived). Toàn bộ cảnh báo đã được lưu trữ." 
+                      : "Không có cảnh báo khẩn nào. AI đã xử lý tự động toàn bộ tin nhắn."}
                   </div>
                 ) : (
                   <div className="flex flex-col">
@@ -473,6 +501,7 @@ export default function AIAssistantPage() {
                           size="small" 
                           className="bg-red-500 text-[10px] h-6 font-semibold mt-1" 
                           onClick={() => handleOpenReplyModal(item)}
+                          disabled={isLockedByYear}
                         >
                           Giáo viên can thiệp
                         </Button>

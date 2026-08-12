@@ -173,7 +173,8 @@ export default function PlanningNotificationsPage() {
       setKeHoachs(resKh.data || []);
 
       // Tải danh sách trao đổi liên lạc
-      const resMail = await apiClient.get(`/TuongTac/hop-thu-ca-nhan/${usr}`);
+      const workingNK = localStorage.getItem('working_academic_year') || '2026-2027';
+      const resMail = await apiClient.get(`/TuongTac/hop-thu-ca-nhan/${usr}?nienKhoa=${workingNK}`);
       if (Array.isArray(resMail.data)) {
         setMailbox(resMail.data);
       }
@@ -195,14 +196,16 @@ export default function PlanningNotificationsPage() {
     }
 
     try {
-      const resBell = await apiClient.get('/TuongTac/thong-bao-chuong');
+      const workingNK = localStorage.getItem('working_academic_year') || '2026-2027';
+      const resBell = await apiClient.get(`/TuongTac/thong-bao-chuong?nienKhoa=${workingNK}`);
       setUnreadCount(Number(resBell.data.soThongBaoChuaDoc || 0));
     } catch (err: any) {
       message.error("LỖI TẢI CHUÔNG: " + err.message);
     }
 
     try {
-      const resMail = await apiClient.get(`/TuongTac/hop-thu-giao-vien/${usr}`);
+      const workingNK = localStorage.getItem('working_academic_year') || '2026-2027';
+      const resMail = await apiClient.get(`/TuongTac/hop-thu-giao-vien/${usr}?nienKhoa=${workingNK}`);
       setMailbox(Array.isArray(resMail.data) ? resMail.data : []);
     } catch (error: any) {
     }
