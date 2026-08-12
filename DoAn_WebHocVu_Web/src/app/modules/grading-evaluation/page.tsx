@@ -973,7 +973,7 @@ export default function GradingPage() {
                   type="default" 
                   icon={<ExportOutlined />} 
                   onClick={handleExport}
-                  disabled={!canExportGrades || isDataIncomplete || isLockedByYear}
+                  disabled={!canExportGrades || isDataIncomplete}
                 >
                   Xuất bảng điểm (Excel)
                 </Button>

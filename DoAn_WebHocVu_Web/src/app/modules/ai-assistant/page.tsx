@@ -247,7 +247,7 @@ export default function AIAssistantPage() {
 
       {role !== 'PhuHuynh' && unreadAlarms.length > 0 && (
         <Alert
-          message={
+          title={
             <Space>
               <BellOutlined className="animate-bounce text-red-500 text-lg" />
               <b className="text-red-700">Bộ phận giáo vụ AI: Phát hiện có {unreadAlarms.length} khiếu nại báo động đỏ đang chờ GVCN xử lý!</b>
@@ -260,7 +260,7 @@ export default function AIAssistantPage() {
       )}
 
       <Alert
-        message="Trình diễn Cơ chế AI Gác Cổng (Thông tư 27 & Xác nhận Sự kiện)"
+        title="Trình diễn Cơ chế AI Gác Cổng (Thông tư 27 & Xác nhận Sự kiện)"
         description="Khi phụ huynh gửi tin nhắn (Zalo/Web Portal), hệ thống AI của C# Backend tự động quét nội dung. Nếu liên quan đến giải thích xếp loại (T/H/C) theo Thông tư 27 hoặc đồng ý kế hoạch dã ngoại, AI sẽ lập tức trả lời đối chứng pháp lý tự động. Những thắc mắc mang tính chất khiếu nại chi phí hoặc phức tạp khác sẽ được đẩy về trạng thái 'Chờ GV xử lý' để rung chuông cảnh báo GVCN vào can thiệp."
         type="info"
         showIcon

@@ -553,9 +553,14 @@ namespace DoAn_WebHocVu_API.Controllers
                 }
             }
             // =====================================================================
-            // Bước 1: Quét bảng Học sinh xem lớp này có những tài khoản phụ huynh nào
+            // Bước 1: Quét bảng LichSuPhanLop xem lớp này có những học sinh nào, từ đó lấy tài khoản phụ huynh tương ứng từ HocSinh
+            var studentIds = await _context.LichSuPhanLops
+                .Where(ls => ls.MaLop == maLop)
+                .Select(ls => ls.MaHs)
+                .ToListAsync();
+
             var taiKhoanPHs = await _context.HocSinhs
-                .Where(hs => hs.MaLop == maLop && !string.IsNullOrEmpty(hs.TaiKhoanPhuHuynh))
+                .Where(hs => studentIds.Contains(hs.MaHs) && !string.IsNullOrEmpty(hs.TaiKhoanPhuHuynh))
                 .Select(hs => hs.TaiKhoanPhuHuynh)
                 .Distinct()
                 .ToListAsync();

@@ -54,6 +54,42 @@ export default function AdminDashboardPage() {
 
   const isLocked = activeAcademicYear !== schoolActiveYear && activeAcademicYear !== '';
 
+  const [migrationSourceYear, setMigrationSourceYear] = useState<string>('');
+  const [migrationTargetYear, setMigrationTargetYear] = useState<string>('');
+  const [isMigrating, setIsMigrating] = useState<boolean>(false);
+
+  const handleMigration = async () => {
+    if (!migrationSourceYear || !migrationTargetYear) {
+      message.error("Vui lòng chọn cả niên khóa nguồn và niên khóa đích!");
+      return;
+    }
+    if (migrationSourceYear === migrationTargetYear) {
+      message.error("Niên khóa nguồn và đích phải khác nhau!");
+      return;
+    }
+    setIsMigrating(true);
+    try {
+      const res = await apiClient.post(`/QuanLyTruong/migrate-dong-nienkhoa?tuNienKhoa=${migrationSourceYear}&denNienKhoa=${migrationTargetYear}`);
+      Modal.success({
+        title: 'Chuyển khóa học sinh thành công!',
+        content: (
+          <div>
+            <p>{res.data?.message || 'Đã chuyển toàn bộ học sinh lên lớp mới thành công.'}</p>
+            <ul className="list-disc pl-5 mt-2">
+              <li>Số học sinh lên lớp: <b>{res.data?.promoted ?? 0}</b> em</li>
+              <li>Số học sinh tốt nghiệp: <b>{res.data?.graduated ?? 0}</b> em</li>
+            </ul>
+          </div>
+        )
+      });
+      fetchDashboardData();
+    } catch (err: any) {
+      message.error(err.response?.data?.message || "Có lỗi xảy ra khi thực hiện chuyển khóa!");
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
   const handleAddNewYear = async () => {
     if (!newYearInput || !newYearInput.trim()) {
       message.error("Vui lòng nhập niên khóa mới");
@@ -490,7 +526,7 @@ export default function AdminDashboardPage() {
         { 
           title: 'Đôn Đốc', 
           key: 'action', 
-          render: (_: any, record: any) => record.trangThai !== 'Đã nộp' ? (
+          render: (_: any, record: any) => !isLocked && record.trangThai !== 'Đã nộp' ? (
             <Button size="small" type="primary" danger icon={<NotificationOutlined />} onClick={() => handleSendReminder(record.maGiaoVien, record.maLop, record.maMon)}>Nhắc nhở</Button>
           ) : null 
         }
@@ -506,7 +542,7 @@ export default function AdminDashboardPage() {
       { 
         title: 'Đôn Đốc', 
         key: 'action', 
-        render: (_: any, record: any) => record.trangThai !== 'Đã nộp' ? (
+        render: (_: any, record: any) => !isLocked && record.trangThai !== 'Đã nộp' ? (
           <Button size="small" type="primary" danger icon={<NotificationOutlined />} onClick={() => handleSendReminder(record.gvchuNhiem, record.maLop)}>Nhắc nhở</Button>
         ) : null 
       }
@@ -520,7 +556,7 @@ export default function AdminDashboardPage() {
       children: (
         <Card title="Khóa sổ Điện tử Toàn Trường (Lock Mechanism)" bordered={false}>
           <Alert
-            message="Chế độ Tường lửa (Read-only) Áp dụng theo Niên khóa"
+            title="Chế độ Tường lửa (Read-only) Áp dụng theo Niên khóa"
             description="Năm học nào được chốt làm Cục diện Hiện Hành thì Giáo viên mới được thao tác Cập nhật. Các dữ liệu thuộc năm học khác (quá khứ) tự động kích hoạt Read-only để chống sửa đổi."
             type="warning"
             showIcon
@@ -591,6 +627,46 @@ export default function AdminDashboardPage() {
               </Space>
             </div>
           </div>
+
+          <div className="mt-6 p-6 bg-slate-50 rounded-xl border border-slate-200">
+            <div className="text-base font-semibold text-slate-700 mb-4 flex items-center gap-2">
+              <span>⚡ Chuyển Khóa Học Sinh Lên Lớp Mới</span>
+              <Tag color="cyan">Tự động hóa</Tag>
+            </div>
+            <p className="text-sm text-slate-500 mb-4">
+              Hệ thống sẽ tự động chuyển toàn bộ học sinh từ khối N ở niên khóa nguồn lên khối N+1 tương ứng ở niên khóa đích. (Vd: Học sinh lớp 1A năm 2026-2027 sẽ tự động được phân lớp vào lớp 2A năm 2027-2028. Học sinh lớp 5 sẽ đổi trạng thái thành "Đã tốt nghiệp").
+            </p>
+            <Space size="large" align="center" className="flex flex-wrap">
+              <div>
+                <span className="text-sm text-slate-600 mr-2">Niên khóa nguồn:</span>
+                <Select 
+                  style={{ width: 160 }} 
+                  placeholder="Chọn niên khóa nguồn" 
+                  value={migrationSourceYear || undefined}
+                  onChange={(val) => setMigrationSourceYear(val)}
+                  options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+                />
+              </div>
+              <div>
+                <span className="text-sm text-slate-600 mr-2">Niên khóa đích:</span>
+                <Select 
+                  style={{ width: 160 }} 
+                  placeholder="Chọn niên khóa đích" 
+                  value={migrationTargetYear || undefined}
+                  onChange={(val) => setMigrationTargetYear(val)}
+                  options={nienKhoaList.map(nk => ({ value: nk, label: nk }))}
+                />
+              </div>
+              <Button 
+                type="primary" 
+                loading={isMigrating}
+                disabled={!migrationSourceYear || !migrationTargetYear || migrationSourceYear === migrationTargetYear}
+                onClick={handleMigration}
+              >
+                Tiến hành Chuyển khóa học sinh
+              </Button>
+            </Space>
+          </div>
         </Card>
       ),
     },
@@ -608,7 +684,7 @@ export default function AdminDashboardPage() {
       label: <span><TeamOutlined />Quản lý Trường & Nhân Sự</span>,
       children: (
         <Card title="Quản trị ban Nghề & Giáo Viên" extra={<Space><Button type="primary" icon={<PlusOutlined />} onClick={() => setIsAddTeacherModalOpen(true)} disabled={isLocked}>Thêm Giáo viên Mới</Button><Button icon={<ReloadOutlined />} onClick={fetchDashboardData}>Làm mới</Button></Space>}>
-           <Alert message="Phân công chuyên môn" description="Việc xếp thời khóa biểu và phân công chủ nhiệm được ủy quyền tại Module 1 (Hồ sơ phân công) để chặn trùng lịch." type="info" showIcon className="mb-4" />
+           <Alert title="Phân công chuyên môn" description="Việc xếp thời khóa biểu và phân công chủ nhiệm được ủy quyền tại Module 1 (Hồ sơ phân công) để chặn trùng lịch." type="info" showIcon className="mb-4" />
           <Table dataSource={giaoViens} columns={giaoVienColumns} rowKey="tenDangNhap" loading={loading} />
         </Card>
       ),
@@ -638,7 +714,7 @@ export default function AdminDashboardPage() {
                   </Button>
                 </Form>
                 {crossCheckResult && (
-                  <Alert message="Kết quả Query" description={<span className="font-semibold text-slate-800">{crossCheckResult}</span>} type="info" showIcon className="mt-4 bg-slate-50" />
+                  <Alert title="Kết quả Query" description={<span className="font-semibold text-slate-800">{crossCheckResult}</span>} type="info" showIcon className="mt-4 bg-slate-50" />
                 )}
               </Card>
             </Col>
@@ -783,7 +859,7 @@ export default function AdminDashboardPage() {
               ]} 
             />
           </div>
-          <Alert message="Kiểm soát KPI Kế hoạch" description="Kiểm tra kế hoạch giảng dạy của GVCN/GVBM để đôn đốc kịp thời qua mạng Zalo học vụ." type="info" showIcon className="mb-4" />
+          <Alert title="Kiểm soát KPI Kế hoạch" description="Kiểm tra kế hoạch giảng dạy của GVCN/GVBM để đôn đốc kịp thời qua mạng Zalo học vụ." type="info" showIcon className="mb-4" />
           <Table 
             dataSource={tienDoKeHoachs} 
             columns={getTienDoColumns()} 

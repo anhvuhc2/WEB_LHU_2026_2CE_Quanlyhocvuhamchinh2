@@ -863,7 +863,7 @@ export default function ClassProfilePage() {
                 </Row>
 
                 {isLocked && (
-                  <Alert message="🛡️ Dữ liệu năm học cũ đã khóa sổ (Archived). Tính năng chỉnh sửa, thêm mới và điểm danh đều bị vô hiệu hóa." type="error" showIcon className="mb-4 rounded-xl" />
+                  <Alert title="🛡️ Dữ liệu năm học cũ đã khóa sổ (Archived). Tính năng chỉnh sửa, thêm mới và điểm danh đều bị vô hiệu hóa." type="error" showIcon className="mb-4 rounded-xl" />
                 )}
 
                 <div className="mb-4 p-4 bg-indigo-50 border border-indigo-100 rounded-xl flex justify-around items-center">

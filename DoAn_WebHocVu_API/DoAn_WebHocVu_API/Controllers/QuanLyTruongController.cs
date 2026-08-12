@@ -391,6 +391,139 @@ namespace DoAn_WebHocVu_API.Controllers
             return Ok(new { message = "Migration hoàn thành rực rỡ! Toàn bộ học sinh đã lên lớp an toàn." });
         }
 
+        [Authorize(Roles = "HieuTruong")]
+        [HttpPost("migrate-dong-nienkhoa")]
+        public async Task<IActionResult> MigrateDongNienKhoa(string tuNienKhoa, string denNienKhoa)
+        {
+            if (string.IsNullOrEmpty(tuNienKhoa) || string.IsNullOrEmpty(denNienKhoa))
+            {
+                return BadRequest(new { message = "Niên khóa nguồn và đích không được để trống." });
+            }
+
+            // 1. Kiểm tra hai niên khóa có tồn tại hay không
+            var nkNguon = await _context.DanhMucNienKhoas.AnyAsync(n => n.MaNienKhoa == tuNienKhoa);
+            var nkDich = await _context.DanhMucNienKhoas.AnyAsync(n => n.MaNienKhoa == denNienKhoa);
+
+            if (!nkNguon || !nkDich)
+            {
+                return BadRequest(new { message = "Một hoặc cả hai niên khóa không tồn tại trong danh mục." });
+            }
+
+            // 2. Kiểm tra cấu trúc lớp học của niên khóa đích. Nếu chưa có, tiến hành sao chép từ niên khóa nguồn
+            var classesNguon = await _context.LopHocs.Where(l => l.NienKhoa == tuNienKhoa).ToListAsync();
+            var classesDich = await _context.LopHocs.Where(l => l.NienKhoa == denNienKhoa).ToListAsync();
+
+            if (!classesDich.Any())
+            {
+                foreach (var oc in classesNguon)
+                {
+                    string baseName = oc.TenLop; // ví dụ: "1A", "2B"
+                    var parts = denNienKhoa.Split('-');
+                    string yearSuffix = parts[0].Length >= 4 ? parts[0].Substring(2) : "27";
+                    string newMaLop = "L" + baseName + "_" + yearSuffix;
+
+                    if (!await _context.LopHocs.AnyAsync(l => l.MaLop == newMaLop))
+                    {
+                        var newLop = new LopHoc { MaLop = newMaLop, TenLop = baseName, NienKhoa = denNienKhoa };
+                        _context.LopHocs.Add(newLop);
+                        classesDich.Add(newLop);
+                    }
+                }
+                await _context.SaveChangesAsync();
+            }
+
+            // 3. Tiến hành chuyển khối / chuyển lớp học sinh tự động
+            int countPromoted = 0;
+            int countGraduated = 0;
+
+            foreach (var oc in classesNguon)
+            {
+                int currentGrade = 0;
+                string gradeStr = string.Concat(oc.TenLop.TakeWhile(char.IsDigit));
+                if (!int.TryParse(gradeStr, out currentGrade) || currentGrade <= 0)
+                {
+                    continue;
+                }
+
+                if (currentGrade >= 5) 
+                {
+                    var studentIdsInClass = await _context.LichSuPhanLops
+                        .Where(l => l.MaLop == oc.MaLop && l.NienKhoa == tuNienKhoa)
+                        .Select(l => l.MaHs)
+                        .ToListAsync();
+
+                    var graduatingStudents = await _context.HocSinhs
+                        .Where(h => studentIdsInClass.Contains(h.MaHs))
+                        .ToListAsync();
+
+                    foreach (var hs in graduatingStudents) 
+                    {
+                        if (hs.TrangThai != "Đã tốt nghiệp")
+                        {
+                            hs.TrangThai = "Đã tốt nghiệp";
+                            countGraduated++;
+                        }
+                    }
+                    continue; 
+                }
+
+                int nextGrade = currentGrade + 1;
+                string classLetter = oc.TenLop.Substring(gradeStr.Length);
+                string newTenLop = nextGrade.ToString() + classLetter;
+
+                var targetClass = classesDich.FirstOrDefault(c => c.TenLop == newTenLop);
+                if (targetClass == null)
+                {
+                    var parts = denNienKhoa.Split('-');
+                    string yearSuffix = parts[0].Length >= 4 ? parts[0].Substring(2) : "27";
+                    string targetNewMaLop = "L" + newTenLop + "_" + yearSuffix;
+
+                    targetClass = await _context.LopHocs.FirstOrDefaultAsync(l => l.MaLop == targetNewMaLop);
+                    if (targetClass == null)
+                    {
+                        targetClass = new LopHoc { MaLop = targetNewMaLop, TenLop = newTenLop, NienKhoa = denNienKhoa };
+                        _context.LopHocs.Add(targetClass);
+                        classesDich.Add(targetClass);
+                        await _context.SaveChangesAsync();
+                    }
+                }
+
+                var studentHistoryOld = await _context.LichSuPhanLops
+                    .Include(l => l.MaHsNavigation)
+                    .Where(l => l.MaLop == oc.MaLop && l.NienKhoa == tuNienKhoa)
+                    .ToListAsync();
+
+                foreach (var ls in studentHistoryOld)
+                {
+                    if (ls.MaHsNavigation == null) continue;
+                    if (ls.MaHsNavigation.TrangThai == "Đã chuyển trường" || ls.MaHsNavigation.TrangThai == "Đã tốt nghiệp")
+                    {
+                        continue;
+                    }
+
+                    var daPhanLopNamMoi = await _context.LichSuPhanLops.AnyAsync(hc => hc.MaHs == ls.MaHs && hc.NienKhoa == denNienKhoa);
+                    if (!daPhanLopNamMoi)
+                    {
+                        _context.LichSuPhanLops.Add(new LichSuPhanLop
+                        {
+                            MaHs = ls.MaHs,
+                            MaLop = targetClass.MaLop,
+                            NienKhoa = denNienKhoa
+                        });
+                        countPromoted++;
+                    }
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new 
+            { 
+                message = $"Chuyển khóa từ {tuNienKhoa} sang {denNienKhoa} thành công rực rỡ!",
+                promoted = countPromoted,
+                graduated = countGraduated
+            });
+        }
+
 
         [AllowAnonymous]
         [HttpGet("fix-database")]
