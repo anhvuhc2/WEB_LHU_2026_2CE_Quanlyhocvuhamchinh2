@@ -254,6 +254,30 @@ export default function ClassProfilePage() {
     }
   };
 
+  const handleSearchStudentById = async (maHS: string) => {
+    if (!maHS) {
+      fetchStudentsForClass(selectedClass);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await apiClient.get(`/HocSinh/tim-kiem/${maHS.trim()}`);
+      if (res.data) {
+        setStudents([res.data]);
+        message.success(`Đã tìm thấy học sinh ${res.data.hoTen}!`);
+      }
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        message.error(`Không tìm thấy học sinh với mã '${maHS}'`);
+      } else {
+        message.error('Lỗi khi tìm kiếm học sinh!');
+      }
+      setStudents([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchScheduleForTeacher = async (teacherId: string) => {
     if (!teacherId) return;
 
@@ -801,14 +825,8 @@ export default function ClassProfilePage() {
               <div>
                 <Row gutter={[16, 16]} className="mb-4" align="middle" justify="space-between">
                   <Col>
-                    <Space>
-                      <Text className="font-semibold text-slate-800">Năm Học:</Text>
-                      <Tag color="blue" className="font-bold text-sm px-3 py-1 m-0 border-blue-200">
-                        {selectedNienKhoa}
-                      </Tag>
-
-
-                      <Text className="font-semibold ml-4">Chọn Lớp ({selectedNienKhoa}):</Text>
+                    <Space align="center">
+                      <Text className="font-semibold whitespace-nowrap">Chọn Lớp ({selectedNienKhoa}):</Text>
                       <div className="flex gap-2 border-l-2 border-indigo-100 pl-4">
                         {lopHocs.filter((c: any) => c.nienKhoa === selectedNienKhoa).map((classItem: any) => (
                           <Button
@@ -827,7 +845,12 @@ export default function ClassProfilePage() {
                   </Col>
 
                   <Col>
-                    <Space>
+                    <Space align="center">
+                      <Text className="font-semibold text-slate-800 whitespace-nowrap">Năm Học:</Text>
+                      <Tag color="blue" className="font-bold text-sm px-3 py-1 mr-4 border-blue-200">
+                        {selectedNienKhoa}
+                      </Tag>
+
                       {/* Chỉ GVCN lớp đó và Hiệu trưởng mới được nhập điểm danh và thêm học sinh */}
                       <Button
                         type="primary"
@@ -858,6 +881,21 @@ export default function ClassProfilePage() {
                       >
                         Xuất Excel Danh Sách
                       </Button>
+                    </Space>
+                  </Col>
+                </Row>
+
+                {/* Hàng Tìm Kiếm Học Sinh Nhanh */}
+                <Row gutter={[16, 16]} className="mb-4" align="middle">
+                  <Col>
+                    <Space align="center">
+                      <Text className="font-semibold whitespace-nowrap">Tìm theo Mã:</Text>
+                      <Input.Search
+                        placeholder="Nhập mã học sinh..."
+                        allowClear
+                        onSearch={handleSearchStudentById}
+                        style={{ width: 220 }}
+                      />
                     </Space>
                   </Col>
                 </Row>

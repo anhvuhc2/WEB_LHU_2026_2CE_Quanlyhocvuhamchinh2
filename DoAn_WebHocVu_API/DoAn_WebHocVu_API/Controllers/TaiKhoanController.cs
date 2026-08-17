@@ -42,7 +42,7 @@ namespace DoAn_WebHocVu_API.Controllers
             {
                 new Claim(ClaimTypes.NameIdentifier, user.TenDangNhap),
                 new Claim(ClaimTypes.Name, user.HoTen),
-                new Claim(ClaimTypes.Role, user.VaiTro) // Ghi rõ HieuTruong, GiaoVien hay PhuHuynh
+                new Claim(ClaimTypes.Role, user.VaiTro.Trim()) // Ghi rõ HieuTruong, GiaoVien hay PhuHuynh
             };
 
             // 3. Lấy con dấu bí mật từ appsettings.json
@@ -62,7 +62,7 @@ namespace DoAn_WebHocVu_API.Controllers
             return Ok(new
             {
                 Token = new JwtSecurityTokenHandler().WriteToken(token),
-                VaiTro = user.VaiTro,
+                VaiTro = user.VaiTro.Trim(),
                 HoTen = user.HoTen
             });
         } // <--- DẤU NGOẶC QUAN TRỌNG NHẤT: Đóng hàm Đăng Nhập ở đây!

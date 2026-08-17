@@ -7,7 +7,7 @@ namespace DoAn_WebHocVu_API.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Roles = "HieuTruong")]
+    [Authorize]
     public class QuanLyTruongController : ControllerBase
     {
         private readonly DoAnWebHocVuAdvancedContext _context;
@@ -99,6 +99,7 @@ namespace DoAn_WebHocVu_API.Controllers
         }
          // 1. Lấy danh sách tất cả giáo viên để Hiệu trưởng chọn
         [HttpGet("danh-sach-giao-vien")]   
+        [Authorize(Roles = "HieuTruong")]
         public async Task<IActionResult> GetGiaoVien()
         {
             var ds = await _context.TaiKhoans
@@ -109,6 +110,7 @@ namespace DoAn_WebHocVu_API.Controllers
         }
         // 2. PHÂN CÔNG CHỦ NHIỆM (Cập nhật bảng LopHoc)
         [HttpPost("phan-cong-chu-nhiem")]
+        [Authorize(Roles = "HieuTruong")]
         public async Task<IActionResult> PhanCongChuNhiem(string maLop, string maGVCN)
         {
             // 1. KIỂM TRA LỚP CÓ TỒN TẠI KHÔNG
@@ -290,6 +292,7 @@ namespace DoAn_WebHocVu_API.Controllers
         }
 
         [HttpGet("danh-sach-mon-hoc")]
+        [Authorize(Roles = "HieuTruong,GiaoVien")]
         public async Task<IActionResult> DanhSachMonHoc()
         {
             var data = await _context.MonHocs.ToListAsync();

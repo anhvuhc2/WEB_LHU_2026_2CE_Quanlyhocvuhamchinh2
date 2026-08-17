@@ -198,5 +198,44 @@ namespace DoAn_WebHocVu_API.Controllers
 
             return Ok(new { message = $"Thành công! Đã chuyển trạng thái hồ sơ của em {hocSinh.HoTen} thành 'Đã chuyển trường'." });
         }
+
+        /// <summary>
+        /// API: Tìm kiếm học sinh theo Mã Học Sinh (maHS)
+        /// Cả Giáo viên và Hiệu trưởng đều tìm kiếm được.
+        /// </summary>
+        [HttpGet("tim-kiem/{maHS}")]
+        public async Task<IActionResult> TimKiemHocSinh(string maHS)
+        {
+            if (string.IsNullOrWhiteSpace(maHS)) return BadRequest("Mã học sinh không được để trống.");
+            maHS = maHS.Trim();
+
+            var hocSinh = await _context.HocSinhs.FirstOrDefaultAsync(h => h.MaHs == maHS);
+            if (hocSinh == null) return NotFound(new { message = $"Không tìm thấy học sinh với mã '{maHS}'." });
+
+            // Tìm thông tin lớp học và niên khóa mới nhất học sinh tham gia
+            var history = await _context.LichSuPhanLops
+                .Include(l => l.MaLopNavigation)
+                .Where(l => l.MaHs == maHS)
+                .OrderByDescending(l => l.NienKhoa)
+                .FirstOrDefaultAsync();
+
+            var result = new
+            {
+                maHs = hocSinh.MaHs,
+                hoTen = hocSinh.HoTen,
+                ngaySinh = hocSinh.NgaySinh,
+                nu = hocSinh.Nu,
+                danTocKhac = hocSinh.DanTocKhac,
+                sdtPhuHuynh = hocSinh.SdtphuHuynh,
+                taiKhoanPhuHuynh = hocSinh.TaiKhoanPhuHuynh,
+                uuTienZalo = hocSinh.UuTienZalo,
+                trangThai = hocSinh.TrangThai,
+                maLop = history?.MaLop ?? "",
+                tenLop = history?.MaLopNavigation?.TenLop ?? "",
+                nienKhoa = history?.NienKhoa ?? ""
+            };
+
+            return Ok(result);
+        }
     }
 }
